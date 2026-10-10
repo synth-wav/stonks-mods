@@ -1,9 +1,9 @@
 # Morally Lucky (`stonk-morallylucky`)
 
-[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3817164629)
-
 > *"Where a significant aspect of what someone does depends on factors beyond his control, yet we continue to treat him in that respect as an object of moral judgment, it can be called moral luck."*
 > Thomas Nagel, *Moral Luck* (1976)
+
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3817164629)
 
 **Morally Lucky** interrupts your trading career with normative ethical dilemmas: what *ought* you to do? Every option is a stance one of three theories would defend: **virtue ethics (VE)**, **consequentialism (UTL)** or **deontology (DNT)**. Every choice has an immediate effect, followed days or weeks later by a consequence that **luck** decides. The same decision can make you a hero or send you to prison. You'll never know in advance which one you're making.
 
