@@ -1,5 +1,7 @@
 # Any Raise (`stonk-anyraise`)
 
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3817196874)
+
 **Raise what you want in the secret poker games.** The table only offers two raise sizes and All-in. Any Raise adds a control that lets you pick any amount in between.
 
 ## Features
