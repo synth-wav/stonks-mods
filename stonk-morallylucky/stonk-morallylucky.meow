@@ -1,48 +1,61 @@
 -- Morally Lucky (stonk-morallylucky)
 --
--- Random moral dilemmas built on real thought experiments. Every choice has
--- an immediate effect and a delayed consequence that luck decides: the same
--- decision can end in triumph or catastrophe. That gap is "moral luck"
--- (Thomas Nagel, Bernard Williams, 1976).
+-- A normative-ethics mod. Random dilemmas ask what you ought to do, and every
+-- option is a stance one of three theories would defend:
+--   VE   virtue ethics       (Aristotle, Confucius, the Stoics, Foot)
+--   UTL  consequentialism    (Bentham, Mill, Godwin, Singer)
+--   DNT  deontology          (Kant, Ross, Socrates in the Crito)
+-- Each choice has an immediate effect and a delayed consequence that luck
+-- decides. The gap between the two is "moral luck" (Nagel, Williams, 1976).
 --
--- Content: mature themes (crime, violence, drugs, drunk driving, infidelity,
+-- Reach 5 choices in a school and its great figures start to appear: one
+-- great reward, one dire ordeal and one where your choice decides, per school.
+--
+-- Content: mature themes (crime, violence, drunk driving, infidelity,
 -- assisted dying, child labour). Outcomes can be catastrophic: jail,
 -- hospital, ruinous losses, company collapses and market-wide crashes.
 --
---   F7         force a dilemma now (testing)
+--   F7         force a dilemma (or an unlocked encounter) now
+--   Ctrl+F7    force an encounter with a great figure, if one is unlocked
 --   Shift+F7   show your moral ledger
 --
--- Catspeak notes: no closures over `let` locals, so dilemma context lives in
--- mod.cur and is passed to each option as a parameter. Dialog buttons and
+-- Catspeak notes: no closures over `let` locals, so a dilemma's context lives
+-- in mod.cur and is passed to each option as a parameter. Dialog buttons and
 -- delayed consequences call functions registered by name ("morallylucky.*").
--- Keep "[" and "]" out of all text: the dialog renders it with Scribble.
+-- Text rules: no square brackets (Scribble markup), no angle brackets or
+-- curly braces (the dialog substitutes variables there), and no \" escapes
+-- (Catspeak doesn't support them; use single quotes).
 
 -- Tuning ---------------------------------------------------------------------
 
-ML_CHANCE = 5          -- % chance per day once the cooldown has passed
-ML_COOLDOWN = 14       -- minimum days between dilemmas
-ML_FIRST_DAY = 10      -- no dilemmas before this game day
-ML_PROFILE_EVERY = 3   -- show the moral ledger after every N choices
+ML_CHANCE = 5            -- % chance per day once the cooldown has passed
+ML_COOLDOWN = 14         -- minimum days between dilemmas
+ML_FIRST_DAY = 10        -- no dilemmas before this game day
+ML_PROFILE_EVERY = 3     -- show the moral ledger after every N choices
+ML_UNLOCK = 5            -- choices in a school needed to meet its figures
+ML_ENCOUNTER_CHANCE = 40 -- % of triggers that become an encounter, if one is unlocked
 ML_TITLE = "Morally Lucky"
 
--- Schools of thought ---------------------------------------------------------
+-- Schools --------------------------------------------------------------------
 
-ML_SCHOOLS = ["util", "kant", "virtue", "power", "care"]
+ML_SCHOOLS = ["ve", "utl", "dnt"]
 
 ML_SCHOOL_NAME = {
-  util: "Consequentialism",
-  kant: "Deontology",
-  virtue: "Virtue ethics",
-  power: "Will to power",
-  care: "Ethics of care"
+  ve: "Virtue ethics (VE)",
+  utl: "Consequentialism (UTL)",
+  dnt: "Deontology (DNT)"
 }
 
 ML_SCHOOL_VOICE = {
-  util: "Bentham would tally your choices and approve of the arithmetic. Mill would ask whether the pleasures were the higher kind.",
-  kant: "Kant would approve: you keep acting as if your choices were universal law, whatever it costs you. Especially when it costs you.",
-  virtue: "Aristotle would call it character: you keep looking for the mean between cowardice and recklessness, and mostly finding it.",
-  power: "Nietzsche would recognise you. Machiavelli would hire you. Thrasymachus would say justice is just the advantage of the stronger, and you seem to agree.",
-  care: "Carol Gilligan and Nel Noddings would recognise this: you weigh people, not principles, and you keep choosing the ones in front of you."
+  ve: "You keep asking what a good person would do, not which rule applies or which sum comes out highest. Aristotle called that practical wisdom: the mean between too much and too little, found case by case.",
+  utl: "You keep counting. Every choice weighs the welfare of everyone it touches, yours included and no more than anyone else's. Bentham would approve of the arithmetic; Mill would ask whether the pleasures were the higher kind.",
+  dnt: "You keep acting on principle: some things are owed and some are forbidden, whatever the payoff. Kant would say you act from duty and treat people as ends, never merely as means, even when it costs you. Especially then."
+}
+
+ML_SCHOOL_UNLOCK = {
+  ve: "Your choices have the shape of a character now. Somewhere, a man who taught Alexander the Great has heard of you.",
+  utl: "Your ledger of welfare is getting long. In a London museum, a preserved philosopher in a glass box seems to lean forward.",
+  dnt: "You've kept faith with duty five times now. In Konigsberg, someone checks his watch and nods."
 }
 
 -- Small helpers --------------------------------------------------------------
@@ -94,6 +107,14 @@ ml_rep = fun (stat, d) {
   }
 }
 
+ml_all_reps = fun (d) {
+  let i = 0
+  while (i < 7) {
+    ml_rep(i, d)
+    i += 1
+  }
+}
+
 ml_stress = fun (d) {
   global.stress = clamp(global.stress + d, 0, 100)
 }
@@ -128,11 +149,11 @@ ml_note = fun (title, text) {
   create_notification(title, text)
 }
 
-ml_live_companies = fun (exclude_player) {
+ml_live_companies = fun () {
   let out = []
   let i = 0
   while (i < global.numberofcompany) {
-    if (birza_slot_is_live(i) and !(exclude_player and i == global.player_compnumber)) {
+    if (birza_slot_is_live(i) and i != global.player_compnumber) {
       array_push(out, i)
     }
     i += 1
@@ -141,7 +162,7 @@ ml_live_companies = fun (exclude_player) {
 }
 
 ml_random_company = fun () {
-  let list = ml_live_companies(true)
+  let list = ml_live_companies()
   if (array_length(list) == 0) {
     return -1
   }
@@ -185,13 +206,14 @@ ml_later = fun (days, id, key, a0, a1, a2, a3) {
   delay_action(days, "morallylucky.outcome", id, key, a0, a1, a2, a3)
 }
 
--- The dilemmas ---------------------------------------------------------------
+-- Dilemmas -------------------------------------------------------------------
 -- id, title, can(), setup() -> ctx, text(ctx), options[] with
 -- { label, school, run(ctx) }, outcomes { key: fun (a0, a1, a2, a3) }.
+-- Every option is tagged ve, utl or dnt.
 
 ML_DILEMMAS = [
 
-  -- 1. Philippa Foot, Judith Jarvis Thomson ---------------------------------
+  -- 1. The trolley problem (Foot 1967, Thomson 1976) ---------------------------
   {
     id: "trolley",
     title: "The Trolley Desk",
@@ -205,31 +227,31 @@ ML_DILEMMAS = [
     text: fun (c) {
       return ml_text([
         "3:12 a.m. A runaway sell algorithm is about to dump ", c.co_name, " and drag five small pension funds down with it. ",
-        "Your quant says one keystroke reroutes the losses into a single account: a retired schoolteacher's life savings.",
-        "\n\nFive ruined families, or one. Philippa Foot drew this problem with a tram. Yours has a terminal, and a cursor blinking on ENTER."
+        "One keystroke reroutes the losses into a single account: a retired schoolteacher's life savings. Or you can cover the hole yourself: ", ml_cash(c.cost), ".",
+        "\n\nUTL: five ruined families are worse than one. DNT: rerouting makes you the one who ruins her; allowing harm isn't doing it. VE: what would a just and generous person do with a fortune and a cursor?"
       ])
     },
     options: [
       {
-        label: "Reroute: save the five",
-        school: "util",
+        label: "UTL: Reroute, save five",
+        school: "utl",
         run: fun (c) {
           ml_stress(10)
-          ml_later(irandom_range(3, 6), "trolley", "rerouted", c.co, c.co_name, 0, 0)
+          ml_later(irandom_range(3, 6), "trolley", "rerouted", 0, 0, 0, 0)
         }
       },
       {
-        label: "Don't touch it",
-        school: "kant",
+        label: "DNT: Don't redirect harm",
+        school: "dnt",
         run: fun (c) {
           ml_price(c.co, 0.85)
           ml_hype(c.co, -0.4)
-          ml_later(irandom_range(3, 6), "trolley", "untouched", c.co, c.co_name, 0, 0)
+          ml_later(irandom_range(3, 6), "trolley", "untouched", 0, 0, 0, 0)
         }
       },
       {
-        label: "Eat the loss yourself",
-        school: "virtue",
+        label: "VE: Cover it yourself",
+        school: "ve",
         run: fun (c) {
           ml_lose(c.cost)
           ml_rep(2, 3)
@@ -240,27 +262,27 @@ ML_DILEMMAS = [
       }
     ],
     outcomes: {
-      rerouted: fun (co, name, a2, a3) {
+      rerouted: fun (a0, a1, a2, a3) {
         if (ml_roll(60)) {
           ml_rep(2, -2)
           ml_rep(4, 2)
-          ml_note(ML_TITLE, "The five funds survived. The schoolteacher's story went viral anyway. Bentham's arithmetic held. It just has a face now.")
+          ml_note(ML_TITLE, "The five funds survived. The schoolteacher's story went viral anyway. The sum came out the way Bentham said it would. It just has a face now.")
         } else {
           ml_lose(ml_amt(0.08))
           ml_rep(2, -3)
           ml_stress(25)
-          ml_note(ML_TITLE, "The reroute misfired and all six accounts were wiped. Regulators want to know who pressed the key. Foot's lever had no bugs. Yours did.")
+          ml_note(ML_TITLE, "The reroute misfired and all six accounts were wiped. Regulators want to know who pressed the key. The calculation was right. The code wasn't.")
         }
       },
-      untouched: fun (co, name, a2, a3) {
+      untouched: fun (a0, a1, a2, a3) {
         if (ml_roll(50)) {
           ml_stress(10)
           ml_rep(2, 1)
-          ml_note(ML_TITLE, "The five funds collapsed. You did nothing wrong. You also did nothing. Kant says that's the difference between doing and allowing. The pensioners don't care.")
+          ml_note(ML_TITLE, "The five funds collapsed. You didn't redirect the harm, and you didn't stop it. The deontologist's line between doing and allowing held. The pensioners are on the wrong side of it.")
         } else {
           ml_rep(2, 2)
           ml_rep(0, 1)
-          ml_note(ML_TITLE, "A market-maker absorbed the selloff before it reached the funds. Your hands are clean, and luckily, so is everyone's ledger.")
+          ml_note(ML_TITLE, "A market-maker absorbed the selloff before it reached the funds. You kept your hands off the lever, and luck kept everyone whole.")
         }
       },
       absorbed: fun (a0, a1, a2, a3) {
@@ -275,7 +297,7 @@ ML_DILEMMAS = [
     }
   },
 
-  -- 2. Plato, Republic II -----------------------------------------------------
+  -- 2. Plato, Republic II: the Ring of Gyges ----------------------------------
   {
     id: "gyges",
     title: "The Ring of Gyges",
@@ -288,23 +310,22 @@ ML_DILEMMAS = [
     },
     text: fun (c) {
       return ml_text([
-        "A disgruntled engineer at ", c.co_name, " slips you a backdoor: live access to the order book of every fund that trades it. Invisible. Untraceable, she swears.",
-        "\n\nIn the Republic, Glaucon asks whether a man with a ring of invisibility would stay just. Socrates spends the rest of the book answering. You have about ten seconds."
+        "An engineer at ", c.co_name, " slips you an untraceable backdoor into the order book of every fund that trades it. With it you could prove what everyone suspects: a cartel is rigging the market. Using it is a crime.",
+        "\n\nUTL: expose the riggers, whatever the means. DNT: report the leak; illegal access is wrong even for a good cause. VE: Plato's just man doesn't need a rule. He just doesn't put the ring on."
       ])
     },
     options: [
       {
-        label: "Put on the ring",
-        school: "power",
+        label: "UTL: Use it to expose them",
+        school: "utl",
         run: fun (c) {
-          ml_gain(ml_amt(0.15))
           ml_rep(4, 2)
-          ml_later(irandom_range(10, 25), "gyges", "worn", 0, 0, 0, 0)
+          ml_later(irandom_range(10, 25), "gyges", "used", 0, 0, 0, 0)
         }
       },
       {
-        label: "Report the engineer",
-        school: "kant",
+        label: "DNT: Report the backdoor",
+        school: "dnt",
         run: fun (c) {
           ml_rep(2, 2)
           ml_rep(3, -1)
@@ -312,128 +333,134 @@ ML_DILEMMAS = [
         }
       },
       {
-        label: "Destroy it unread",
-        school: "virtue",
+        label: "VE: Destroy it unread",
+        school: "ve",
         run: fun (c) {
           ml_happy(5)
-          ml_later(irandom_range(8, 15), "gyges", "destroyed", c.co, c.co_name, 0, 0)
+          ml_later(irandom_range(8, 15), "gyges", "destroyed", 0, 0, 0, 0)
         }
       }
     ],
     outcomes: {
-      worn: fun (a0, a1, a2, a3) {
-        if (ml_roll(70)) {
+      used: fun (a0, a1, a2, a3) {
+        if (ml_roll(60)) {
+          ml_rep(0, 3)
+          ml_market(1.15)
           ml_gain(ml_amt(0.1))
-          ml_rep(2, -2)
-          ml_stress(10)
-          ml_note(ML_TITLE, "Nobody ever noticed. The trades kept coming. Thrasymachus said justice is the advantage of the stronger. Today he looks right, and you look rich.")
+          ml_note("News", "An anonymous dossier exposes a market-rigging cartel. Arrests follow, the market rallies, and an anonymous tip pays out. Good outcome, illegal means. The consequentialist sleeps fine.")
         } else {
-          ml_lose(ml_amt(0.25))
+          ml_lose(ml_amt(0.2))
           ml_rep(0, -5)
           ml_rep(2, -5)
-          ml_jail(180)
-          ml_note("Court", "The backdoor was a honeypot. Federal agents traced every trade to you. Six months. Gyges was a shepherd with a magic ring. You were a trader with a USB stick.")
+          ml_jail(150)
+          ml_note("Court", "The backdoor was a honeypot. The cartel walks; you get five months for unauthorised access. The greater good needed a better plan.")
         }
       },
       reported: fun (a0, a1, a2, a3) {
         if (ml_roll(60)) {
           ml_rep(0, 2)
           ml_gain(ml_amt(0.03))
-          ml_note(ML_TITLE, "Regulators thank you publicly and pay a whistleblower bounty. Socrates would point out that the just man came out ahead. He'd also point out you got lucky.")
+          ml_note(ML_TITLE, "Regulators thank you publicly and pay a whistleblower bounty. Duty and fortune, for once, point the same way.")
         } else {
           ml_rep(3, -3)
           ml_stress(15)
-          ml_note(ML_TITLE, "Your name leaked as the one who turned her in. Half your contacts stop returning calls. Justice is its own reward. It doesn't come with friends.")
+          ml_note(ML_TITLE, "Your name leaked as the one who turned the engineer in, and the cartel keeps rigging. You did what was right. It didn't come with friends.")
         }
       },
-      destroyed: fun (co, name, a2, a3) {
-        if (ml_roll(50) and ml_company_ok(co, name)) {
+      destroyed: fun (a0, a1, a2, a3) {
+        if (ml_roll(50)) {
           ml_market(0.85)
-          ml_note(ML_TITLE, "She sold the backdoor to someone with fewer scruples, and the whole market wobbles as the rigging comes to light. Your hands stayed clean. The water still got dirty.")
+          ml_note(ML_TITLE, "The engineer sold the backdoor to someone with fewer scruples, and the market wobbles as the rigging spreads. Your character stayed clean. The water still got dirty.")
         } else {
-          ml_note(ML_TITLE, "Nothing more comes of the backdoor. You'll never know whether destroying it mattered. That's the hard part of the ring: nobody sees what you didn't do.")
+          ml_note(ML_TITLE, "Nothing more comes of the backdoor. That's the hard part of the ring: nobody sees what you didn't do. Plato thought that was exactly the point.")
         }
       }
     }
   },
 
-  -- 3. Robert Nozick's experience machine; Homer's lotus eaters --------------
+  -- 3. Drug pricing: access, contracts and justice ------------------------------
   {
-    id: "lotus",
-    title: "The Lotus Eaters",
+    id: "cure",
+    title: "The Price of a Cure",
     can: fun () {
       return true
     },
     setup: fun () {
-      return { human: 0, cost: ml_amt(0.15) }
+      return { human: 0, stake: ml_amt(0.15) }
     },
     text: fun (c) {
       return ml_text([
-        "A biotech founder pitches Lotus: one pill and any life feels perfect for six hours. Zero overdoses in trials. A relapse rate nobody wants to put on a slide.",
-        "\n\nNozick asked whether you'd plug into a machine that guaranteed bliss. Nobody asked the investors. The founder wants ", ml_cash(c.cost), " for a controlling stake, and he left a sample on your desk."
+        "A biotech you backed with ", ml_cash(c.stake), " has a cure for a rare childhood disease. The board wants your vote on the price.",
+        " You promised your co-investors maximum return. At that price, most families can't pay.",
+        "\n\nUTL: tiered pricing, rich countries pay more, so the most children get treated. DNT: you made a promise to your investors and you keep it. VE: a just and generous person takes a fair profit and no more."
       ])
     },
     options: [
       {
-        label: "Fund Lotus",
-        school: "util",
+        label: "UTL: Tiered pricing",
+        school: "utl",
         run: fun (c) {
-          ml_lose(c.cost)
-          ml_rep(6, 2)
-          ml_later(irandom_range(15, 30), "lotus", "funded", c.cost, 0, 0, 0)
+          ml_rep(5, 2)
+          ml_later(irandom_range(15, 30), "cure", "tiered", c.stake, 0, 0, 0)
         }
       },
       {
-        label: "Try the sample",
-        school: "power",
+        label: "DNT: Keep your promise",
+        school: "dnt",
         run: fun (c) {
-          ml_happy(30)
-          ml_stress(-30)
-          ml_note(ML_TITLE, "Six perfect hours. The furniture was beautiful. You understood jazz. You also don't remember where your car is.")
-          ml_later(irandom_range(2, 5), "lotus", "sampled", 0, 0, 0, 0)
+          ml_rep(1, 2)
+          ml_later(irandom_range(15, 30), "cure", "promise", c.stake, 0, 0, 0)
         }
       },
       {
-        label: "Report it to regulators",
-        school: "kant",
+        label: "VE: A fair price",
+        school: "ve",
         run: fun (c) {
           ml_rep(2, 2)
-          ml_rep(6, -1)
-          ml_note(ML_TITLE, "You hand the pitch deck to the drug regulator. Nozick's answer was that we want to actually do things, not just feel we did. You did one thing, anyway.")
+          ml_rep(0, 2)
+          ml_later(irandom_range(15, 30), "cure", "fair", c.stake, 0, 0, 0)
         }
       }
     ],
     outcomes: {
-      funded: fun (cost, a1, a2, a3) {
-        let r = irandom(99)
-        if (r < 50) {
-          ml_gain(cost * 4)
-          ml_happy(10)
-          ml_note(ML_TITLE, "Lotus is approved for clinical depression and your stake quadruples. Bentham's hedonic calculus, in pill form.")
-        } else if (r < 80) {
-          ml_rep(0, -4)
-          ml_rep(2, -3)
-          ml_stress(15)
-          ml_note(ML_TITLE, "Lotus leaks onto the street. The tabloids call it the investor's drug and print your face. The money's fine. Your name isn't.")
+      tiered: fun (stake, a1, a2, a3) {
+        if (ml_roll(60)) {
+          ml_gain(stake * 1.5)
+          ml_rep(5, 3)
+          ml_note("News", "The cure reaches forty countries. Rich health systems pay a premium, poor ones pay cost, and the company still turns a profit. Singer cites it as a model.")
         } else {
-          ml_rep(0, -6)
-          ml_market(0.6)
-          ml_note("News", "A Lotus epidemic spreads through the city's trading floors. Half the market can't remember to sell. The whole index slides, and your stake is evidence. The experience machine got everyone.")
+          ml_lose(ml_amt(0.05))
+          ml_rep(1, -2)
+          ml_note("News", "Grey-market traders buy the cheap doses abroad and resell them in rich countries. Revenue collapses. Good arithmetic, but it couldn't account for smugglers.")
         }
       },
-      sampled: fun (a0, a1, a2, a3) {
-        if (ml_roll(35)) {
-          ml_hospital()
-          ml_note("Doctor", "Lotus did not agree with you. You wake up in hospital with a nurse who has seen this six times this week.")
+      promise: fun (stake, a1, a2, a3) {
+        if (ml_roll(60)) {
+          ml_gain(stake * 3)
+          ml_rep(3, 2)
+          ml_note(ML_TITLE, "The investors get exactly what you promised: a fortune. You kept your word. Kant would say that's what matters. Most of the children don't get the drug.")
         } else {
-          ml_stress(10)
-          ml_note(ML_TITLE, "No side effects. Except that ordinary days look a little grey now, and you catch yourself thinking about the sample. Nozick was right to worry.")
+          ml_gain(stake)
+          ml_rep(0, -6)
+          ml_stress(20)
+          ml_note("News", "A senate hearing on cure profiteering puts your face on every channel. The investors are happy. Nobody else is. Keeping a promise doesn't mean the promise was a good one to make.")
+        }
+      },
+      fair: fun (stake, a1, a2, a3) {
+        if (ml_roll(70)) {
+          ml_gain(stake * 1.2)
+          ml_happy(15)
+          ml_note(ML_TITLE, "A modest profit, a lot of treated children, and the satisfaction Aristotle said comes from acting well. The investors grumble, then quietly brag about it at parties.")
+        } else {
+          ml_lose(ml_amt(0.1))
+          ml_rep(3, -2)
+          ml_note("Court", "Your co-investors sue for breach of fiduciary duty and win a settlement. A fair price turns out to be very expensive.")
         }
       }
     }
   },
 
-  -- 4. Peter Singer, "Famine, Affluence, and Morality" -------------------------
+  -- 4. Singer, "Famine, Affluence, and Morality" (1972) ------------------------
   {
     id: "drowning",
     title: "The Drowning Child",
@@ -442,58 +469,49 @@ ML_DILEMMAS = [
     },
     setup: fun () {
       let h = ml_random_contact()
-      return { human: h, who: ml_name(h), tithe: ml_amt(0.1), hurt: ml_amt(0.4) }
+      return { human: h, who: ml_name(h), tithe: ml_amt(0.1), hurt: ml_amt(0.4), bonus: ml_amt(0.08) }
     },
     text: fun (c) {
       return ml_text([
-        c.who, " calls, voice shaking. A famine appeal closes tonight, matched three-to-one by a foundation. ",
-        "'You'd ruin your suit to pull a drowning child out of a pond,' they say, quoting Peter Singer. 'This pond is just farther away.'",
-        "\n\nA tithe would be ", ml_cash(c.tithe), ". Giving until it hurts would be ", ml_cash(c.hurt), "."
+        c.who, " calls about a famine appeal that closes tonight. 'You'd ruin your suit to pull a drowning child out of a pond,' they say, quoting Peter Singer. 'This pond is just farther away.'",
+        " But you've already promised your staff a bonus pool of ", ml_cash(c.bonus), ".",
+        "\n\nUTL: give until it hurts, ", ml_cash(c.hurt), ". DNT: a promise is a promise; the bonus goes to your staff. VE: generosity is a mean between stinginess and recklessness: a tithe, ", ml_cash(c.tithe), "."
       ])
     },
     options: [
       {
-        label: "Give a tithe",
-        school: "virtue",
+        label: "UTL: Give until it hurts",
+        school: "utl",
+        run: fun (c) {
+          ml_lose(c.hurt)
+          ml_rep(5, 5)
+          ml_rep(0, 3)
+          ml_friend(c.human, 20)
+          ml_later(irandom_range(10, 20), "drowning", "hurt", 0, 0, 0, 0)
+        }
+      },
+      {
+        label: "DNT: Pay the promised bonus",
+        school: "dnt",
+        run: fun (c) {
+          ml_lose(c.bonus)
+          ml_rep(3, 2)
+          ml_friend(c.human, -10)
+          ml_later(irandom_range(10, 20), "drowning", "bonus", 0, 0, 0, 0)
+        }
+      },
+      {
+        label: "VE: Give a tithe",
+        school: "ve",
         run: fun (c) {
           ml_lose(c.tithe)
           ml_rep(5, 2)
           ml_friend(c.human, 10)
           ml_later(irandom_range(10, 20), "drowning", "tithe", 0, 0, 0, 0)
         }
-      },
-      {
-        label: "Give until it hurts",
-        school: "util",
-        run: fun (c) {
-          ml_lose(c.hurt)
-          ml_rep(5, 5)
-          ml_rep(0, 3)
-          ml_rep(2, 2)
-          ml_friend(c.human, 20)
-          ml_later(irandom_range(10, 20), "drowning", "hurt", 0, 0, 0, 0)
-        }
-      },
-      {
-        label: "Give nothing",
-        school: "power",
-        run: fun (c) {
-          ml_friend(c.human, -15)
-          ml_later(irandom_range(5, 10), "drowning", "nothing", c.human, 0, 0, 0)
-        }
       }
     ],
     outcomes: {
-      tithe: fun (a0, a1, a2, a3) {
-        if (ml_roll(80)) {
-          ml_rep(0, 2)
-          ml_happy(10)
-          ml_note(ML_TITLE, "The appeal's report arrives: wells dug, a district fed. Your tithe is a line in a spreadsheet and a few hundred people alive.")
-        } else {
-          ml_stress(10)
-          ml_note(ML_TITLE, "The charity's director has been arrested for embezzlement. Your gift bought a boat. Your act was exactly as good as it was yesterday. Its outcome wasn't. That's moral luck.")
-        }
-      },
       hurt: fun (a0, a1, a2, a3) {
         if (ml_roll(50)) {
           ml_rep(0, 3)
@@ -502,44 +520,54 @@ ML_DILEMMAS = [
         } else {
           ml_rep(1, -3)
           ml_stress(15)
-          ml_note(ML_TITLE, "Your creditors notice the hole in your liquidity and tighten your terms. Singer never said saving the child would be free. He just said you should.")
+          ml_note(ML_TITLE, "Your creditors notice the hole in your liquidity and tighten your terms. Singer never said saving the child would be free. He just said you ought to.")
         }
       },
-      nothing: fun (h, a1, a2, a3) {
+      bonus: fun (a0, a1, a2, a3) {
         if (ml_roll(50)) {
-          ml_rep(3, -2)
-          ml_rep(0, -1)
-          ml_note(ML_TITLE, ml_name(h) + " told everyone you hung up on a famine. Ayn Rand would call it the virtue of selfishness. Your dinner invitations call it something else.")
+          ml_rep(3, 2)
+          ml_happy(5)
+          ml_note(ML_TITLE, "Your staff hear you chose their bonus over a public gesture. Loyalty runs both ways: two of them turn down poaching offers.")
         } else {
-          ml_note(ML_TITLE, "Nothing comes of it. The appeal closes. Somewhere far away, the pond stays exactly as deep as it was.")
+          ml_stress(15)
+          ml_note("News", "The famine appeal fell short of its target. The papers run photographs. You kept your promise. Kant says that was your duty. The pictures say other things.")
+        }
+      },
+      tithe: fun (a0, a1, a2, a3) {
+        if (ml_roll(80)) {
+          ml_rep(0, 2)
+          ml_happy(10)
+          ml_note(ML_TITLE, "The appeal's report arrives: wells dug, a district fed. Your tithe is a line in a spreadsheet and a few hundred people alive.")
+        } else {
+          ml_stress(10)
+          ml_note(ML_TITLE, "The charity's director has been arrested for embezzlement. Your gift bought a boat. Your act was just as good as it was yesterday. Its outcome wasn't. That's moral luck.")
         }
       }
     }
   },
 
-  -- 5. Bernard Williams' Gauguin ----------------------------------------------
+  -- 5. Promise against the greater good (after Williams' Gauguin) -------------
   {
     id: "gauguin",
-    title: "Gauguin's Gamble",
+    title: "The Promise and the Moonshot",
     can: fun () {
       return ml_random_contact() > 0 and ml_random_company() >= 0
     },
     setup: fun () {
       let h = ml_random_contact()
       let co = ml_random_company()
-      return { human: h, who: ml_name(h), co: co, co_name: global.company_name[co], stake: ml_amt(0.3), help: ml_amt(0.05) }
+      return { human: h, who: ml_name(h), co: co, co_name: global.company_name[co], stake: ml_amt(0.3), split: ml_amt(0.12) }
     },
     text: fun (c) {
       return ml_text([
-        c.who, ", one of your oldest friends, is going under and begs you to co-sign a loan and help run the business for a year. ",
-        "The same week: a wild chance to pour ", ml_cash(c.stake), " into ", c.co_name, ", a moonshot only you believe in. You can't do both.",
-        "\n\nBernard Williams asked whether Gauguin was justified in abandoning his family for Tahiti. His answer: it depends on whether the paintings turned out good. Nobody can know in advance."
+        "Years ago you promised ", c.who, " you'd back their business if it ever got into trouble. It's in trouble. The same week, ", c.co_name, " needs ", ml_cash(c.stake), " to finish a water purifier that could reach millions. You can't fully do both.",
+        "\n\nUTL: millions of people outweigh one friend. DNT: you gave your word. VE: practical wisdom: help your friend and back the purifier, half each, and accept that neither gets everything."
       ])
     },
     options: [
       {
-        label: "Chase the moonshot",
-        school: "power",
+        label: "UTL: Back the purifier",
+        school: "utl",
         run: fun (c) {
           ml_lose(c.stake)
           ml_friend(c.human, -25)
@@ -547,46 +575,66 @@ ML_DILEMMAS = [
         }
       },
       {
-        label: "Stand by your friend",
-        school: "care",
+        label: "DNT: Keep your promise",
+        school: "dnt",
         run: fun (c) {
-          ml_lose(c.help)
+          ml_lose(ml_amt(0.05))
           ml_friend(c.human, 20)
-          ml_happy(10)
           ml_later(irandom_range(20, 40), "gauguin", "friend", c.human, 0, 0, 0)
+        }
+      },
+      {
+        label: "VE: Split it wisely",
+        school: "ve",
+        run: fun (c) {
+          ml_lose(c.split)
+          ml_friend(c.human, 5)
+          ml_later(irandom_range(20, 40), "gauguin", "split", c.split, c.human, 0, 0)
         }
       }
     ],
     outcomes: {
       moonshot: fun (stake, h, co, name) {
         if (ml_roll(45)) {
-          ml_gain(stake * 6)
+          ml_gain(stake * 5)
           ml_rep(6, 4)
+          ml_rep(5, 3)
           if (ml_company_ok(co, name)) {
             ml_hype(co, 0.6)
           }
-          ml_note(ML_TITLE, "The moonshot lands. Your stake is worth six times what you paid. Williams would say you're retrospectively justified. " + ml_name(h) + " would say something else, if they still took your calls.")
+          ml_note(ML_TITLE, "The purifier ships to forty countries and your stake is worth five times what you paid. Millions drink clean water. " + ml_name(h) + " still doesn't take your calls.")
         } else {
           ml_friend(h, -10)
           ml_rep(2, -2)
           ml_stress(20)
-          ml_note(ML_TITLE, "The moonshot burns up on the launch pad. Williams' point was exactly this: without the paintings, Gauguin is just a man who left. You are just a trader who left.")
+          ml_note(ML_TITLE, "The purifier fails its final trials. You broke a promise for a good bet that lost. Bernard Williams' point: only the outcome could have justified it, and the outcome didn't come.")
         }
       },
       friend: fun (h, a1, a2, a3) {
         if (ml_roll(50)) {
           ml_friend(h, 10)
           ml_rep(3, 2)
-          ml_note(ML_TITLE, ml_name(h) + "'s business turns the corner. They'll never forget it. The moonshot you skipped? You check. It would have made you rich. You close the tab.")
+          ml_note(ML_TITLE, ml_name(h) + "'s business turns the corner. They'll never forget it. The purifier went ahead without you, slower.")
         } else {
           ml_stress(15)
-          ml_note(ML_TITLE, ml_name(h) + "'s business fails anyway. You did the right thing and lost. Nagel calls this resultant luck: we're judged by outcomes we never controlled.")
+          ml_note(ML_TITLE, ml_name(h) + "'s business fails anyway. You kept your word and it wasn't enough. Nagel calls this resultant luck: we're judged by outcomes we never controlled.")
+        }
+      },
+      split: fun (split, h, a2, a3) {
+        if (ml_roll(55)) {
+          ml_gain(split * 2)
+          ml_friend(h, 10)
+          ml_note(ML_TITLE, "Both survive: your friend's business limps on and the purifier finds a second investor. Neither of them got everything, and both thank you.")
+        } else {
+          ml_friend(h, -10)
+          ml_stress(15)
+          ml_note(ML_TITLE, "Half was not enough for either. Both fail. Practical wisdom is a virtue. It is not a guarantee.")
         }
       }
     }
   },
 
-  -- 6. Thomas Nagel's two drunk drivers ---------------------------------------
+  -- 6. Nagel's two drunk drivers -------------------------------------------------
   {
     id: "drivers",
     title: "The Two Drivers",
@@ -594,41 +642,53 @@ ML_DILEMMAS = [
       return true
     },
     setup: fun () {
-      return { human: 0, fix: ml_amt(0.01), bills: ml_amt(0.05) }
+      return { human: 0, bills: ml_amt(0.05) }
     },
     text: fun (c) {
       return ml_text([
-        "You don't remember the drive home from the bar. This morning's paper: a cyclist was hit on your street around 1 a.m. and the driver kept going. There is a dent in your bumper. Could be anything.",
-        "\n\nThomas Nagel described two equally reckless drunk drivers. One hits a child; one doesn't. Only luck separates them. Which driver are you?"
+        "You don't remember the drive home from the bar. This morning's paper: a cyclist was hit on your street around 1 a.m. and the driver kept going. There is a dent in your bumper.",
+        "\n\nUTL: quietly pay the cyclist's bills; more good done, no years wasted in a cell. DNT: you may have committed a crime; you owe the truth to the police. VE: courage and honesty, in person: knock on the cyclist's door yourself."
       ])
     },
     options: [
       {
-        label: "Go to the police",
-        school: "kant",
+        label: "UTL: Pay bills anonymously",
+        school: "utl",
+        run: fun (c) {
+          ml_lose(c.bills)
+          ml_later(irandom_range(6, 14), "drivers", "paid", 0, 0, 0, 0)
+        }
+      },
+      {
+        label: "DNT: Go to the police",
+        school: "dnt",
         run: fun (c) {
           ml_stress(15)
           ml_later(irandom_range(4, 8), "drivers", "confessed", 0, 0, 0, 0)
         }
       },
       {
-        label: "Fix the bumper quietly",
-        school: "power",
+        label: "VE: Face the cyclist",
+        school: "ve",
         run: fun (c) {
-          ml_lose(c.fix)
-          ml_later(irandom_range(10, 30), "drivers", "hidden", 0, 0, 0, 0)
-        }
-      },
-      {
-        label: "Pay the cyclist's bills",
-        school: "care",
-        run: fun (c) {
-          ml_lose(c.bills)
-          ml_later(irandom_range(6, 14), "drivers", "paid", 0, 0, 0, 0)
+          ml_stress(10)
+          ml_later(irandom_range(4, 8), "drivers", "faced", 0, 0, 0, 0)
         }
       }
     ],
     outcomes: {
+      paid: fun (a0, a1, a2, a3) {
+        if (ml_roll(60)) {
+          ml_happy(10)
+          ml_rep(5, 2)
+          ml_note(ML_TITLE, "The cyclist recovers fully and thanks the mysterious donor on local TV. More good done than a cell would have managed. You'll never know if you were the driver.")
+        } else {
+          ml_rep(0, -4)
+          ml_rep(2, -3)
+          ml_jail(180)
+          ml_note("Court", "Investigators trace your anonymous payments back to you, and the paint on your bumper matches. Hit-and-run, plus what looks like hush money. Six months.")
+        }
+      },
       confessed: fun (a0, a1, a2, a3) {
         if (ml_roll(50)) {
           ml_lose(ml_amt(0.03))
@@ -638,38 +698,27 @@ ML_DILEMMAS = [
         } else {
           ml_lose(ml_amt(0.1))
           ml_rep(0, -4)
-          ml_rep(2, 1)
+          ml_rep(2, 2)
           ml_jail(120)
-          ml_note("Court", "The paint matches. You were the driver. The cyclist will walk again. You'll spend four months inside, and the judge notes you came forward. Nagel's unlucky driver, but an honest one.")
+          ml_note("Court", "The paint matches. You were the driver. The cyclist will walk again. Four months inside, and the judge notes you came forward. Nagel's unlucky driver, but an honest one.")
         }
       },
-      hidden: fun (a0, a1, a2, a3) {
-        if (ml_roll(60)) {
-          ml_stress(20)
-          ml_note(ML_TITLE, "Nobody ever comes. You'll never know if it was you. Nagel would say your guilt is the same either way, and some nights you agree with him.")
-        } else {
-          ml_lose(ml_amt(0.2))
-          ml_rep(0, -8)
-          ml_rep(2, -6)
-          ml_jail(365)
-          ml_note("Court", "A doorbell camera caught your plates. Hit-and-run, plus the cover-up. A year inside. The same act as the other driver, a different world, and you made it worse.")
-        }
-      },
-      paid: fun (a0, a1, a2, a3) {
+      faced: fun (a0, a1, a2, a3) {
         if (ml_roll(50)) {
-          ml_happy(10)
-          ml_rep(5, 2)
-          ml_note(ML_TITLE, "The cyclist recovers fully, and thanks the mysterious donor on local TV. You'll never know if you were paying off a debt or just being kind.")
+          ml_happy(15)
+          ml_rep(2, 3)
+          ml_note(ML_TITLE, "The cyclist listens, cries, and decides not to press charges, as long as you never drive drunk again. You won't. Aristotle: we become brave by doing brave things.")
         } else {
-          ml_rep(0, -3)
-          ml_stress(10)
-          ml_note(ML_TITLE, "Investigators trace your anonymous payment and want to know why a stranger paid a hit-and-run victim's bills. You have no good answer. They let it go, for now.")
+          ml_lose(ml_amt(0.05))
+          ml_rep(0, -2)
+          ml_jail(60)
+          ml_note("Court", "The cyclist calls the police while you're still on the doorstep. Two months, reduced for candour. Courage got you here, and it got you a lighter sentence.")
         }
       }
     }
   },
 
-  -- 7. Thomas Hobbes, Leviathan ------------------------------------------------
+  -- 7. Paying protection: welfare, complicity, courage ---------------------------
   {
     id: "leviathan",
     title: "A Small Leviathan",
@@ -681,14 +730,14 @@ ML_DILEMMAS = [
     },
     text: fun (c) {
       return ml_text([
-        "Two men in very good suits visit your office. Their employer offers stability: for ", ml_cash(c.tribute), " a quarter, nobody shorts your positions, sabotages your deals, or follows you home.",
-        "\n\nHobbes said life without a sovereign is nasty, brutish and short. These men are offering to be a small, private sovereign. They are not asking."
+        "Two men in very good suits visit your office. For ", ml_cash(c.tribute), " a quarter, nobody sabotages your deals or follows your staff home. They are not asking.",
+        "\n\nUTL: pay, and keep everyone safe. DNT: funding a criminal enterprise is wrong, full stop. VE: courage is the mean between cowardice and recklessness: go to the police."
       ])
     },
     options: [
       {
-        label: "Pay the tribute",
-        school: "util",
+        label: "UTL: Pay to keep staff safe",
+        school: "utl",
         run: fun (c) {
           ml_lose(c.tribute)
           ml_rep(3, 2)
@@ -696,16 +745,16 @@ ML_DILEMMAS = [
         }
       },
       {
-        label: "Refuse politely",
-        school: "kant",
+        label: "DNT: Refuse on principle",
+        school: "dnt",
         run: fun (c) {
           ml_stress(10)
           ml_later(irandom_range(3, 8), "leviathan", "refused", 0, 0, 0, 0)
         }
       },
       {
-        label: "Go to the police",
-        school: "virtue",
+        label: "VE: Go to the police",
+        school: "ve",
         run: fun (c) {
           ml_rep(2, 2)
           ml_later(irandom_range(5, 12), "leviathan", "police", 0, 0, 0, 0)
@@ -717,39 +766,40 @@ ML_DILEMMAS = [
         if (ml_roll(60)) {
           ml_market(1.15)
           ml_gain(ml_amt(0.05))
-          ml_note(ML_TITLE, "Whatever they do, it works. Your deals close smoothly and the market feels oddly cooperative. Hobbes would call it peace. He'd also tell you not to ask how it's kept.")
+          ml_note(ML_TITLE, "Whatever they do, it works. Nobody gets hurt, your deals close smoothly, and the market feels oddly cooperative. Hobbes would call it peace. Don't ask how it's kept.")
         } else {
           ml_rep(0, -5)
           ml_rep(2, -4)
           ml_jail(90)
-          ml_note("Court", "Police raid the organisation. Your quarterly payments are in their ledger, neatly itemised. Three months for financing a criminal enterprise. The sovereign fell, and took its subjects with it.")
+          ml_note("Court", "Police raid the organisation. Your quarterly payments are in their ledger, neatly itemised. Three months for financing a criminal enterprise. The safety you bought came with a receipt.")
         }
       },
       refused: fun (a0, a1, a2, a3) {
         if (ml_roll(50)) {
-          ml_note(ML_TITLE, "The men never come back. Maybe you weren't worth the trouble. Hobbes' state of nature turned out to be a bluff, this time.")
+          ml_rep(2, 2)
+          ml_note(ML_TITLE, "The men never come back. Maybe you weren't worth the trouble. Your principles cost you nothing this time.")
         } else {
           ml_hospital()
-          ml_note("Oh no!", "They came back. You wake up in hospital with two cracked ribs and a get-well card with no name on it. Nasty, brutish, and thankfully short.")
+          ml_note("Oh no!", "They came back. You wake up in hospital with two cracked ribs and a get-well card with no name on it. Principles are a duty. They are not body armour.")
         }
       },
       police: fun (a0, a1, a2, a3) {
         let r = irandom(99)
         if (r < 50) {
           ml_rep(0, 4)
-          ml_note("News", "Arrests across the city. Your testimony brought down a protection racket. Plato's guardians would be proud: courage, in a very good suit.")
+          ml_note("News", "Arrests across the city. Your testimony brought down a protection racket. Courage, in a very good suit.")
         } else if (r < 80) {
-          ml_note(ML_TITLE, "The police take your statement and nothing happens. Hobbes thought we hand power to the state so it protects us. The state seems busy.")
+          ml_note(ML_TITLE, "The police take your statement and nothing happens. Brave, and so far, irrelevant.")
         } else {
           ml_hospital()
           ml_lose(ml_amt(0.1))
-          ml_note("Oh no!", "Someone firebombed your office in the night. Records gone, two weeks of recovery ahead. Courage is a virtue. It is not body armour.")
+          ml_note("Oh no!", "Someone firebombed your office in the night. Records gone, two weeks of recovery ahead. Courage is a virtue. Aristotle never said it was safe.")
         }
       }
     }
   },
 
-  -- 8. Kant's formula of humanity ----------------------------------------------
+  -- 8. Kant's formula of humanity ------------------------------------------------
   {
     id: "kompromat",
     title: "Merely as a Means",
@@ -758,84 +808,82 @@ ML_DILEMMAS = [
     },
     setup: fun () {
       let co = ml_random_company()
-      return { co: co, co_name: global.company_name[co], human: 0, fee: ml_amt(0.01) }
+      return { co: co, co_name: global.company_name[co], human: 0 }
     },
     text: fun (c) {
       return ml_text([
-        "A private investigator drops an envelope on your desk: photos of the CEO of ", c.co_name, " leaving a hotel at 4 a.m. with someone who is very much not their spouse.",
-        " Use them and the CEO will do whatever you ask. Leak them and ", c.co_name, " craters.",
-        "\n\nKant: never treat a person merely as a means. The investigator: 'Treat them however you like. I'm paid either way.'"
+        "You know the CEO of ", c.co_name, " is quietly looting the employee pension fund. You can't prove it. What you do have, from a private investigator, is photos of the CEO's affair.",
+        "\n\nUTL: use the photos to force the CEO to stop; thousands of pensions outweigh one person's dignity. DNT: never treat a person merely as a means; burn them and report the fraud properly. VE: be honest and brave: confront the CEO face to face."
       ])
     },
     options: [
       {
-        label: "Blackmail the CEO",
-        school: "power",
+        label: "UTL: Leverage the photos",
+        school: "utl",
         run: fun (c) {
-          ml_later(irandom_range(6, 15), "kompromat", "blackmail", c.co, c.co_name, 0, 0)
+          ml_later(irandom_range(6, 15), "kompromat", "leverage", c.co, c.co_name, 0, 0)
         }
       },
       {
-        label: "Leak the photos",
-        school: "util",
+        label: "DNT: Burn them, report it",
+        school: "dnt",
         run: fun (c) {
-          ml_price(c.co, 0.6)
-          ml_hype(c.co, -0.7)
-          ml_note("News", "Scandal at " + c.co_name + "! Explicit photos of the CEO are everywhere and the stock is in freefall. Anyone short tonight is having a very good evening.")
-          ml_later(irandom_range(8, 20), "kompromat", "leaked", 0, 0, 0, 0)
-        }
-      },
-      {
-        label: "Burn the envelope",
-        school: "kant",
-        run: fun (c) {
-          ml_lose(c.fee)
           ml_rep(2, 2)
-          ml_later(irandom_range(10, 20), "kompromat", "burned", c.co, c.co_name, 0, 0)
+          ml_later(irandom_range(10, 20), "kompromat", "reported", c.co, c.co_name, 0, 0)
+        }
+      },
+      {
+        label: "VE: Confront the CEO",
+        school: "ve",
+        run: fun (c) {
+          ml_later(irandom_range(5, 10), "kompromat", "confronted", c.co, c.co_name, 0, 0)
         }
       }
     ],
     outcomes: {
-      blackmail: fun (co, name, a2, a3) {
+      leverage: fun (co, name, a2, a3) {
         if (ml_roll(55)) {
-          ml_gain(ml_amt(0.1))
-          ml_rep(3, 2)
-          if (ml_company_ok(co, name)) {
-            ml_hype(co, 0.4)
-          }
-          ml_note(ML_TITLE, "The CEO folds. A board seat, a sweetheart contract, and a standing invitation you'll never use. Kant would say you used a person merely as a means. It was very lucrative.")
+          ml_rep(5, 3)
+          ml_gain(ml_amt(0.05))
+          ml_note(ML_TITLE, "The CEO quietly refunds the pension fund and resigns 'to spend time with family'. Thousands of retirements saved by one act of blackmail. The arithmetic is unanswerable. The method is not.")
         } else {
           ml_rep(0, -6)
           ml_rep(2, -5)
           ml_jail(60)
-          ml_note("Court", "The CEO confessed the affair on live TV and named their blackmailer. Two months for extortion. They used you as a means, too: to a redemption arc.")
+          ml_note("Court", "The CEO confessed the affair on live TV and named their blackmailer. Two months for extortion, and the pension fraud never comes up. You used a person as a means, and they used you right back.")
         }
       },
-      leaked: fun (a0, a1, a2, a3) {
-        if (ml_roll(30)) {
-          ml_rep(0, -4)
-          ml_rep(2, -3)
-          ml_note(ML_TITLE, "The leak is traced to your investigator, and your investigator traces it to you. Everyone now knows what you do with envelopes.")
+      reported: fun (co, name, a2, a3) {
+        if (ml_roll(50)) {
+          ml_rep(0, 3)
+          ml_rep(3, 2)
+          if (ml_company_ok(co, name)) {
+            ml_price(co, 0.8)
+          }
+          ml_note("News", "Regulators open an investigation into " + name + "'s pension fund. The CEO is charged. You never touched the photos. Duty, and slowly, justice.")
         } else {
-          ml_note(ML_TITLE, "The leak is never traced. Mill would ask whether the market's knowing the truth was worth one family's worst week. You didn't stay to find out.")
+          ml_stress(15)
+          ml_note(ML_TITLE, "The regulator files your report and does nothing. The pensions keep draining. Kant says you did right. The pensioners would like a word with Kant.")
         }
       },
-      burned: fun (co, name, a2, a3) {
+      confronted: fun (co, name, a2, a3) {
         if (ml_roll(50)) {
           ml_rep(3, 3)
-          ml_note(ML_TITLE, "The CEO learns you had the photos and burned them, and becomes the most loyal ally you've ever had. Treating someone as an end in themselves turns out to have dividends.")
+          ml_rep(2, 2)
+          ml_note(ML_TITLE, "The CEO breaks down, confesses, and repays the fund. People mostly want to be better than they are; sometimes they need someone to ask them to their face.")
         } else {
+          ml_rep(0, -3)
+          ml_lose(ml_amt(0.05))
           if (ml_company_ok(co, name)) {
-            ml_price(co, 0.7)
-            ml_hype(co, -0.5)
+            ml_hype(co, 0.3)
           }
-          ml_note("News", "Someone else had copies. The photos leak anyway and " + name + " plunges. Your restraint changed nothing about the outcome, and everything about you.")
+          ml_note("Court", "The CEO sues you for defamation and settles out of court for a painful sum. Honesty was the virtuous choice. It wasn't the safe one.")
         }
       }
     }
   },
 
-  -- 9. Ursula K. Le Guin, "The Ones Who Walk Away from Omelas" ----------------
+  -- 9. Le Guin, "The Ones Who Walk Away from Omelas" (1973) --------------------
   {
     id: "omelas",
     title: "The Ones Who Walk Away",
@@ -847,14 +895,24 @@ ML_DILEMMAS = [
     },
     text: fun (c) {
       return ml_text([
-        "Your analysts finally found why the market keeps booming: the supply chain under half the index runs through a factory where children are locked in, sixteen hours a day. Everyone at the top knows.",
-        "\n\nLe Guin wrote about a perfect city whose happiness depends on one child's misery, and about the people who walk away from it. Expose this and the boom ends. Overnight. For everyone."
+        "Your analysts found why the market keeps booming: the supply chain under half the index runs through a factory where children are locked in, sixteen hours a day. Everyone at the top knows.",
+        "\n\nUTL: the boom feeds millions of families; one factory's misery is outweighed. DNT: complicity in that is wrong; expose it, whatever happens to the market. VE: Le Guin's answer: walk away, quietly, and refuse to profit."
       ])
     },
     options: [
       {
-        label: "Expose it",
-        school: "kant",
+        label: "UTL: Stay and profit",
+        school: "utl",
+        run: fun (c) {
+          ml_market(1.25)
+          ml_gain(ml_amt(0.1))
+          ml_rep(2, -4)
+          ml_later(irandom_range(20, 40), "omelas", "stayed", 0, 0, 0, 0)
+        }
+      },
+      {
+        label: "DNT: Expose it",
+        school: "dnt",
         run: fun (c) {
           ml_market(0.4)
           ml_rep(2, 6)
@@ -865,18 +923,8 @@ ML_DILEMMAS = [
         }
       },
       {
-        label: "Stay and profit",
-        school: "util",
-        run: fun (c) {
-          ml_market(1.25)
-          ml_gain(ml_amt(0.1))
-          ml_rep(2, -4)
-          ml_later(irandom_range(20, 40), "omelas", "stayed", 0, 0, 0, 0)
-        }
-      },
-      {
-        label: "Quietly walk away",
-        school: "virtue",
+        label: "VE: Walk away",
+        school: "ve",
         run: fun (c) {
           ml_lose(c.divest)
           ml_rep(2, 3)
@@ -886,16 +934,6 @@ ML_DILEMMAS = [
       }
     ],
     outcomes: {
-      exposed: fun (a0, a1, a2, a3) {
-        if (ml_roll(60)) {
-          ml_market(1.4)
-          ml_happy(15)
-          ml_note("News", "Reforms pass. The factory is closed and the children go home. The market recovers, slower and a little more honestly. Omelas, rebuilt without a basement.")
-        } else {
-          ml_stress(20)
-          ml_note(ML_TITLE, "The factory closed. The children were moved to another one, three borders away. The market forgot within a month. You didn't.")
-        }
-      },
       stayed: fun (a0, a1, a2, a3) {
         if (ml_roll(35)) {
           ml_market(0.5)
@@ -906,91 +944,98 @@ ML_DILEMMAS = [
           ml_stress(10)
           ml_note(ML_TITLE, "The boom continues. The children are still there. Bentham counted the happiness of the many. Le Guin made you look at the one.")
         }
+      },
+      exposed: fun (a0, a1, a2, a3) {
+        if (ml_roll(60)) {
+          ml_market(1.4)
+          ml_happy(15)
+          ml_note("News", "Reforms pass. The factory is closed and the children go home. The market recovers, slower and a little more honestly.")
+        } else {
+          ml_stress(20)
+          ml_note(ML_TITLE, "The factory closed. The children were moved to another one, three borders away. The market forgot within a month. You didn't.")
+        }
       }
     }
   },
 
-  -- 10. Blaise Pascal's wager ---------------------------------------------------
+  -- 10. Kant's murderer at the door (Constant 1797, Kant 1797) ---------------------
   {
-    id: "pascal",
-    title: "Pascal's Tithe",
+    id: "door",
+    title: "The Murderer at the Door",
     can: fun () {
-      return true
+      return ml_random_contact() > 0
     },
     setup: fun () {
-      return { human: 0, tithe: ml_amt(0.2) }
+      let h = ml_random_contact()
+      return { human: h, who: ml_name(h) }
     },
     text: fun (c) {
       return ml_text([
-        "A smiling recruiter from the Church of the Infinite Dividend wants a fifth of everything you own: ", ml_cash(c.tithe), ".",
-        " 'If we're wrong, you lose a fifth of a fortune. If we're right, you gain eternity, compounded quarterly.'",
-        "\n\nBlaise Pascal made the same argument about God. To be fair to Pascal, he didn't take a commission."
+        c.who, " is hiding in your back office from a violent ex. There's a knock. A man with a bulge in his coat asks, very politely, whether ", c.who, " is here.",
+        "\n\nUTL: lie; a lie that saves a life is obviously right. DNT: Kant notoriously said you may not lie even here, but you may refuse to answer. VE: courage and practical wisdom: talk him down."
       ])
     },
     options: [
       {
-        label: "Pay the tithe",
-        school: "util",
+        label: "UTL: Lie to him",
+        school: "utl",
         run: fun (c) {
-          ml_lose(c.tithe)
-          ml_later(irandom_range(15, 30), "pascal", "paid", c.tithe, 0, 0, 0)
+          ml_later(irandom_range(3, 7), "door", "lied", c.human, 0, 0, 0)
         }
       },
       {
-        label: "Refuse",
-        school: "kant",
+        label: "DNT: Refuse to answer",
+        school: "dnt",
         run: fun (c) {
-          ml_later(irandom_range(5, 12), "pascal", "refused", 0, 0, 0, 0)
+          ml_later(irandom_range(2, 5), "door", "refused", c.human, 0, 0, 0)
         }
       },
       {
-        label: "Join to investigate",
-        school: "virtue",
+        label: "VE: Talk him down",
+        school: "ve",
         run: fun (c) {
-          ml_lose(ml_amt(0.02))
-          ml_later(irandom_range(10, 20), "pascal", "infiltrated", 0, 0, 0, 0)
+          ml_later(irandom_range(2, 5), "door", "talked", c.human, 0, 0, 0)
         }
       }
     ],
     outcomes: {
-      paid: fun (tithe, a1, a2, a3) {
-        let r = irandom(99)
-        if (r < 70) {
-          ml_stress(15)
-          ml_rep(0, -2)
-          ml_note("News", "The Church of the Infinite Dividend's leaders vanish with the treasury. The compounding was not eternal. Pascal's wager assumed the house was honest.")
-        } else if (r < 95) {
-          ml_gain(tithe * 1.5)
-          ml_rep(4, 5)
-          ml_note(ML_TITLE, "A congregant who turns out to be a legendary fund manager takes you under her wing. Her tips more than repay your tithe. Was it providence? Pascal would say the question is the point.")
+      lied: fun (h, a1, a2, a3) {
+        if (ml_roll(70)) {
+          ml_friend(h, 25)
+          ml_happy(10)
+          ml_note(ML_TITLE, "He believed you and left. " + ml_name(h) + " is safe and has moved out of the city. Most philosophers since Kant have agreed with you, and none of them were at the door.")
         } else {
-          ml_gain(tithe * 10)
-          ml_note(ML_TITLE, "A miracle, or an accounting error nobody wants to correct: the Church pays out ten times your tithe, then dissolves. You will never understand what happened. Pascal would call that faith.")
+          ml_hospital()
+          ml_friend(h, 10)
+          ml_note("Oh no!", "He came back that night, angry at being lied to. " + ml_name(h) + " got away through the back. You didn't. Kant's grim warning: if you lie, the consequences become yours.")
         }
       },
-      refused: fun (a0, a1, a2, a3) {
-        if (ml_roll(30)) {
-          ml_stress(10)
-          ml_note(ML_TITLE, "The recruiters start waiting outside your office every morning, smiling. Pascal said all of humanity's problems come from being unable to sit quietly in a room. You can't, anymore.")
+      refused: fun (h, a1, a2, a3) {
+        if (ml_roll(50)) {
+          ml_friend(h, 15)
+          ml_rep(2, 2)
+          ml_note(ML_TITLE, "He stared at you for a long time, then left. Silence kept both your integrity and your friend. Kant would note you never had to choose.")
         } else {
-          ml_note(ML_TITLE, "You never hear from the Church again. The wager stays unresolved, which, to be fair, is how Pascal left it too.")
+          ml_friend(h, -20)
+          ml_stress(30)
+          ml_note("Oh no!", "He pushed past you and found " + ml_name(h) + ". They survived, barely. You told no lie. You also told no one to run. Duty kept your hands clean and your friend in hospital.")
         }
       },
-      infiltrated: fun (a0, a1, a2, a3) {
+      talked: fun (h, a1, a2, a3) {
         if (ml_roll(50)) {
           ml_rep(0, 3)
-          ml_rep(2, 1)
-          ml_note("News", "Your exposé on the Church of the Infinite Dividend makes the front page. Socrates would approve: the unexamined cult is not worth joining.")
+          ml_friend(h, 20)
+          ml_note("News", "Local trader talks armed man into surrendering. He broke down on your doorstep and turned himself in. Courage, the mean between running and fighting.")
         } else {
-          ml_happy(15)
-          ml_rep(2, -1)
-          ml_note(ML_TITLE, "You got a little too into it. The chanting is soothing and the people are kind. Kierkegaard warned that faith is a leap. You're still in the air.")
+          ml_hospital()
+          ml_friend(h, 15)
+          ml_note("Oh no!", "He didn't want to talk. You're in hospital with a knife wound, but " + ml_name(h) + " escaped while he was busy with you. Courage protected them. It didn't protect you.")
         }
       }
     }
   },
 
-  -- 11. Thomas Aquinas, the doctrine of double effect ---------------------------
+  -- 11. Aquinas' doctrine of double effect; assisted dying ----------------------------
   {
     id: "doublefx",
     title: "The Double Effect",
@@ -1003,21 +1048,21 @@ ML_DILEMMAS = [
     },
     text: fun (c) {
       return ml_text([
-        c.who, " is dying, and it is not peaceful. Between coughs they ask you to bring them pills from a clinic in a country with different laws, and to sit with them when they take them.",
-        "\n\nAquinas said you may cause a bad effect you foresee but do not intend. ", c.who, " says Aquinas never had stage-four anything."
+        c.who, " is dying, and it is not peaceful. They ask you to bring them pills from a clinic abroad, illegal here, and to sit with them when they take them.",
+        "\n\nUTL: ending unbearable suffering is the kindest outcome. DNT: deliberately helping to kill is wrong, even when asked; Aquinas allowed only effects you foresee but don't intend. VE: compassion without crossing the line: pay for the best palliative care there is."
       ])
     },
     options: [
       {
-        label: "Bring the pills",
-        school: "care",
+        label: "UTL: Bring the pills",
+        school: "utl",
         run: fun (c) {
           ml_later(irandom_range(4, 10), "doublefx", "pills", c.human, 0, 0, 0)
         }
       },
       {
-        label: "Refuse, gently",
-        school: "kant",
+        label: "DNT: Refuse, gently",
+        school: "dnt",
         run: fun (c) {
           ml_friend(c.human, -20)
           ml_stress(15)
@@ -1025,8 +1070,8 @@ ML_DILEMMAS = [
         }
       },
       {
-        label: "Pay for the best hospice",
-        school: "virtue",
+        label: "VE: Pay for hospice care",
+        school: "ve",
         run: fun (c) {
           ml_lose(c.hospice)
           ml_rep(5, 1)
@@ -1039,7 +1084,7 @@ ML_DILEMMAS = [
         if (ml_roll(60)) {
           ml_happy(-10)
           ml_stress(-10)
-          ml_note(ML_TITLE, "You held " + ml_name(h) + "'s hand until the end. It was quiet. You don't know what Aquinas would say. You know what they said: thank you.")
+          ml_note(ML_TITLE, "You held " + ml_name(h) + "'s hand until the end. It was quiet. They said thank you.")
         } else {
           ml_rep(0, -3)
           ml_jail(30)
@@ -1047,21 +1092,27 @@ ML_DILEMMAS = [
         }
       },
       refused: fun (h, a1, a2, a3) {
-        ml_stress(20)
-        ml_note(ML_TITLE, ml_name(h) + " died last night. It wasn't easy. Kant says duty never promised you'd feel good about doing it. He was right about that, at least.")
+        if (ml_roll(50)) {
+          ml_stress(20)
+          ml_note(ML_TITLE, ml_name(h) + " died last night. It wasn't easy. Kant says duty never promised you'd feel good about doing it.")
+        } else {
+          ml_friend(h, 25)
+          ml_happy(5)
+          ml_note(ML_TITLE, "A new pain treatment gives " + ml_name(h) + " three good weeks at the end. They say they're glad you said no. You'll never know if you were right or just lucky.")
+        }
       },
       hospice: fun (h, a1, a2, a3) {
         ml_happy(10)
         ml_friend(h, 15)
-        ml_note(ML_TITLE, "The hospice was everything the brochure promised. A middle path between doing and refusing. Aristotle would approve, and so, mostly, did " + ml_name(h) + ".")
+        ml_note(ML_TITLE, "The hospice was everything the brochure promised. A middle path between doing and refusing, and " + ml_name(h) + ", mostly, approved.")
       }
     }
   },
 
-  -- 12. The prisoner's dilemma (Flood, Dresher, Tucker) -------------------------
+  -- 12. Loyalty or truth: the interrogation room ---------------------------------------
   {
     id: "prisoners",
-    title: "The Prisoner's Dilemma",
+    title: "Loyalty or Truth",
     can: fun () {
       return ml_random_company() >= 0
     },
@@ -1071,53 +1122,506 @@ ML_DILEMMAS = [
     },
     text: fun (c) {
       return ml_text([
-        "You and the CEO of ", c.co_name, " are in separate interview rooms. The regulator is sure you two coordinated trades last quarter, and can prove almost none of it.",
-        " The offer, to each of you: testify against the other and walk free. Both stay silent: a small fine each. Both talk: you both go down.",
-        "\n\nGame theory says talk. Hobbes says trust no one. Your mother says don't be a rat."
+        "You and the CEO of ", c.co_name, ", an old ally, are in separate interview rooms. The regulator is sure you two coordinated trades last quarter. You did.",
+        "\n\nUTL: negotiate a joint plea that keeps total harm lowest. DNT: you were asked a question and you owe the truth: testify. VE: loyalty is a virtue; stay silent and trust your friend to do the same."
       ])
     },
     options: [
       {
-        label: "Stay silent",
-        school: "virtue",
+        label: "UTL: Negotiate a joint plea",
+        school: "utl",
         run: fun (c) {
-          ml_later(irandom_range(3, 6), "prisoners", "silent", c.co, c.co_name, 0, 0)
+          ml_later(irandom_range(3, 6), "prisoners", "plea", c.co, c.co_name, 0, 0)
         }
       },
       {
-        label: "Testify",
-        school: "power",
+        label: "DNT: Tell the truth",
+        school: "dnt",
         run: fun (c) {
-          ml_later(irandom_range(3, 6), "prisoners", "testify", c.co, c.co_name, 0, 0)
+          ml_later(irandom_range(3, 6), "prisoners", "truth", c.co, c.co_name, 0, 0)
+        }
+      },
+      {
+        label: "VE: Stay loyal, stay silent",
+        school: "ve",
+        run: fun (c) {
+          ml_later(irandom_range(3, 6), "prisoners", "silent", c.co, c.co_name, 0, 0)
         }
       }
     ],
     outcomes: {
+      plea: fun (co, name, a2, a3) {
+        if (ml_roll(70)) {
+          ml_lose(ml_amt(0.08))
+          ml_rep(0, -2)
+          ml_note("Court", "The joint plea goes through: a heavy fine each, no prison. Nobody's happy, nobody's ruined. The minimum total harm, exactly as calculated.")
+        } else {
+          ml_lose(ml_amt(0.08))
+          ml_jail(60)
+          ml_note("Court", "The judge rejects the plea as too lenient and makes an example of you both. The fine, plus two months. The expected value was good. The judge wasn't.")
+        }
+      },
+      truth: fun (co, name, a2, a3) {
+        if (ml_roll(50)) {
+          ml_rep(2, 3)
+          ml_rep(3, -3)
+          if (ml_company_ok(co, name)) {
+            ml_hype(co, -0.5)
+          }
+          ml_note("Court", "You told the whole truth, including your own part. The regulator rewards candour: a fine for you, charges for " + name + "'s CEO. Your old ally will never speak to you again.")
+        } else {
+          ml_lose(ml_amt(0.1))
+          ml_rep(2, 2)
+          ml_jail(120)
+          ml_note("Court", "Your honest testimony convicted you both. Four months each. You owed the truth, and you paid it in full.")
+        }
+      },
       silent: fun (co, name, a2, a3) {
         if (ml_roll(50)) {
           ml_lose(ml_amt(0.03))
-          ml_rep(3, 2)
-          ml_note("Court", "You both stayed silent. A small fine each, and a strange new trust between you. Cooperation: the outcome game theory says rational players never reach.")
+          ml_rep(3, 3)
+          ml_note("Court", "You both stayed silent. A small fine each, and a friendship that's now unbreakable. Loyalty paid.")
         } else {
           ml_lose(ml_amt(0.15))
           ml_rep(0, -5)
           ml_jail(365)
-          ml_note("Court", "The CEO of " + name + " talked. You didn't. They walked out the front door; you got a year. Loyalty is a virtue. It is also, as the game theorists keep saying, dominated.")
+          ml_note("Court", "The CEO of " + name + " talked. You didn't. They walked out the front door; you got a year. Loyalty is a virtue. It needs a friend who has it too.")
+        }
+      }
+    }
+  }
+]
+
+-- Encounters with great figures -------------------------------------------------
+-- Unlock when a school reaches ML_UNLOCK choices; each happens once per save.
+-- Per school: one great reward, one choice that decides, one dire ordeal.
+-- Single-button encounters use school "" so they don't count toward the ledger.
+
+ML_ENCOUNTERS = [
+
+  -- UTL: reward -------------------------------------------------------------------
+  {
+    id: "mill",
+    school: "utl",
+    title: "John Stuart Mill",
+    can: fun () {
+      return true
+    },
+    setup: fun () {
+      return { human: 0, gift: ml_amt(0.2) }
+    },
+    text: fun (c) {
+      return ml_text([
+        "A thin man in a Victorian frock coat is waiting in your office. Nobody saw him come in. He introduces himself as John Stuart Mill and says he has been reading your ledger.",
+        "\n\n'It is better to be a human being dissatisfied than a pig satisfied; better to be Socrates dissatisfied than a fool satisfied. You have been counting welfare well. Let me teach you to count it wisely.'",
+        "\n\nHe talks until dawn."
+      ])
+    },
+    options: [
+      {
+        label: "Listen until dawn",
+        school: "",
+        run: fun (c) {
+          ml_happy(40)
+          ml_stress(-40)
+          ml_rep(4, 3)
+          ml_rep(5, 2)
+          ml_gain(c.gift)
+          ml_note(ML_TITLE, "Mill leaves at sunrise. You understand the market, and yourself, a little better. Somehow your accounts are " + ml_cash(c.gift) + " richer. Higher pleasures, it turns out, compound.")
+        }
+      }
+    ],
+    outcomes: {}
+  },
+
+  -- UTL: choice ---------------------------------------------------------------------
+  {
+    id: "bentham",
+    school: "utl",
+    title: "Bentham's Panopticon",
+    can: fun () {
+      return true
+    },
+    setup: fun () {
+      return { human: 0, cost: ml_amt(0.1) }
+    },
+    text: fun (c) {
+      return ml_text([
+        "Two museum porters wheel in a glass case. Inside sits Jeremy Bentham, or his preserved Auto-Icon, wax head and all. Tucked in his coat: blueprints for a Panopticon trading floor, where every trader can be watched at all times from one central tower.",
+        "\n\nA note in his handwriting: 'The greatest happiness of the greatest number. Productivity is happiness. Build it.' It would cost ", ml_cash(c.cost), "."
+      ])
+    },
+    options: [
+      {
+        label: "UTL: Build the Panopticon",
+        school: "utl",
+        run: fun (c) {
+          ml_lose(c.cost)
+          ml_rep(6, 2)
+          ml_later(irandom_range(15, 30), "bentham", "built", c.cost, 0, 0, 0)
         }
       },
-      testify: fun (co, name, a2, a3) {
-        if (ml_roll(50)) {
-          ml_rep(3, -2)
-          if (ml_company_ok(co, name)) {
-            ml_hype(co, -0.5)
-          }
-          ml_note("Court", "The CEO of " + name + " stayed silent, and your testimony sent them away. You walked free. Every trader in the city now knows exactly what you are.")
-        } else {
-          ml_lose(ml_amt(0.1))
-          ml_rep(0, -3)
-          ml_jail(180)
-          ml_note("Court", "You both talked. Six months each. Perfectly rational, perfectly miserable: the Nash equilibrium, with prison food.")
+      {
+        label: "DNT: Privacy is a right",
+        school: "dnt",
+        run: fun (c) {
+          ml_rep(2, 2)
+          ml_rep(3, 1)
+          ml_note(ML_TITLE, "You decline. The porters wheel Bentham away. You could swear the wax head looks disappointed.")
         }
+      }
+    ],
+    outcomes: {
+      built: fun (cost, a1, a2, a3) {
+        if (ml_roll(55)) {
+          ml_gain(cost * 6)
+          ml_rep(4, 4)
+          ml_rep(6, 3)
+          ml_note(ML_TITLE, "The Panopticon works terrifyingly well. Productivity triples; nobody slacks when they might be watched. Bentham's arithmetic is vindicated, and you are very, very rich.")
+        } else {
+          ml_rep(0, -7)
+          ml_rep(2, -4)
+          ml_rep(3, -3)
+          ml_market(0.85)
+          ml_note("News", "Your traders walk out en masse and the papers call your trading floor a prison. Other firms' staff strike in sympathy and the market dips. Utility, it turns out, includes not being watched.")
+        }
+      }
+    }
+  },
+
+  -- UTL: dire -------------------------------------------------------------------------
+  {
+    id: "godwin",
+    school: "utl",
+    title: "Godwin's Fire",
+    can: fun () {
+      return ml_random_contact() > 0
+    },
+    setup: fun () {
+      let h = ml_random_contact()
+      return { human: h, who: ml_name(h) }
+    },
+    text: fun (c) {
+      return ml_text([
+        "The hotel is on fire. Through the smoke, an old man in a powdered wig, who calls himself William Godwin, grabs your arm: two rooms, one chance. In one, a philanthropist whose foundation feeds a hundred thousand people. In the other, ", c.who, ".",
+        "\n\n'Archbishop Fenelon or the chambermaid,' Godwin shouts. 'I always said save the Archbishop, even if the chambermaid were my own mother. What magic is in the pronoun my?'",
+        "\n\nYou will not come out of this unhurt."
+      ])
+    },
+    options: [
+      {
+        label: "UTL: Save the philanthropist",
+        school: "utl",
+        run: fun (c) {
+          ml_hospital()
+          ml_friend(c.human, -50)
+          ml_happy(-30)
+          ml_rep(5, 4)
+          ml_rep(0, 3)
+          ml_note("Oh no!", "You carried the philanthropist out and went back for " + c.who + " too late to get them out unhurt. They're alive, with burns, and they know which door you opened first. Godwin's arithmetic: a hundred thousand meals. Yours: smoke inhalation and a friendship.")
+        }
+      },
+      {
+        label: "VE: Save your friend",
+        school: "ve",
+        run: fun (c) {
+          ml_hospital()
+          ml_friend(c.human, 40)
+          ml_happy(-10)
+          ml_market(0.85)
+          ml_rep(0, -2)
+          ml_note("Oh no!", "You carried " + c.who + " out. The philanthropist didn't make it, and their foundation is frozen. Markets dip on the news. Bernard Williams said a man who stops to weigh the numbers before saving his wife has 'one thought too many'. You didn't.")
+        }
+      }
+    ],
+    outcomes: {}
+  },
+
+  -- DNT: reward --------------------------------------------------------------------------
+  {
+    id: "kant",
+    school: "dnt",
+    title: "Kant's Afternoon Walk",
+    can: fun () {
+      return true
+    },
+    setup: fun () {
+      return { human: 0, gift: ml_amt(0.15) }
+    },
+    text: fun (c) {
+      return ml_text([
+        "At precisely half past three, a small, neat old man passes your window, exactly as he has every afternoon of his life. Immanuel Kant. He stops, which he never does, and beckons you to walk with him.",
+        "\n\n'Nothing in the world, or even out of it, can be called good without qualification, except a good will. You have one. It is rarer on a trading floor than you would think.'"
+      ])
+    },
+    options: [
+      {
+        label: "Walk with him",
+        school: "",
+        run: fun (c) {
+          ml_rep(2, 6)
+          ml_rep(0, 3)
+          ml_rep(3, 2)
+          ml_market(1.2)
+          ml_gain(c.gift)
+          ml_note(ML_TITLE, "Word spreads that you walk with Kant. Counterparties trust you without contracts; the market, briefly, behaves like a kingdom of ends. You're " + ml_cash(c.gift) + " richer and nobody had to be used to get there.")
+        }
+      }
+    ],
+    outcomes: {}
+  },
+
+  -- DNT: choice -------------------------------------------------------------------------
+  {
+    id: "ross",
+    school: "dnt",
+    title: "Ross's Prima Facie Duties",
+    can: fun () {
+      return ml_random_contact() > 0
+    },
+    setup: fun () {
+      let h = ml_random_contact()
+      return { human: h, who: ml_name(h), sum: ml_amt(0.1) }
+    },
+    text: fun (c) {
+      return ml_text([
+        "A tweedy Oxford don, W. D. Ross, sets two envelopes on your desk. In one: your promise to lend ", c.who, " ", ml_cash(c.sum), " to save their business. In the other: an engineer's report. That same money, today, would fix a chemical plant's failing valve before it poisons a river town.",
+        "\n\n'Fidelity and non-maleficence are both prima facie duties,' Ross says. 'When they conflict, there is no formula. You must judge which is weightier here.'"
+      ])
+    },
+    options: [
+      {
+        label: "DNT: Keep your promise",
+        school: "dnt",
+        run: fun (c) {
+          ml_lose(c.sum)
+          ml_friend(c.human, 25)
+          ml_rep(3, 3)
+          ml_later(irandom_range(8, 15), "ross", "promise", 0, 0, 0, 0)
+        }
+      },
+      {
+        label: "UTL: Prevent the harm",
+        school: "utl",
+        run: fun (c) {
+          ml_lose(c.sum)
+          ml_friend(c.human, -20)
+          ml_later(irandom_range(8, 15), "ross", "valve", 0, 0, 0, 0)
+        }
+      }
+    ],
+    outcomes: {
+      promise: fun (a0, a1, a2, a3) {
+        if (ml_roll(50)) {
+          ml_rep(2, 3)
+          ml_note(ML_TITLE, "The chemical plant found the money elsewhere and the valve held. You kept your word and nobody was hurt. Ross smiles somewhere in Oxford.")
+        } else {
+          ml_rep(0, -4)
+          ml_stress(25)
+          ml_market(0.9)
+          ml_note("News", "The valve failed. A river town is poisoned and a reporter learns you'd seen the report. You kept your promise to one person. A town paid for it.")
+        }
+      },
+      valve: fun (a0, a1, a2, a3) {
+        if (ml_roll(60)) {
+          ml_rep(0, 5)
+          ml_rep(5, 3)
+          ml_note("News", "The valve was replaced days before it would have burst. The town never knew how close it came. Your friend knows exactly what you chose instead.")
+        } else {
+          ml_stress(20)
+          ml_rep(3, -3)
+          ml_note(ML_TITLE, "The plant's owners pocketed your money and never fixed the valve. It held anyway, by luck. You broke a promise for nothing.")
+        }
+      }
+    }
+  },
+
+  -- DNT: dire ------------------------------------------------------------------------------
+  {
+    id: "socrates",
+    school: "dnt",
+    title: "The Hemlock",
+    can: fun () {
+      return true
+    },
+    setup: fun () {
+      return { human: 0, fine: ml_amt(0.15) }
+    },
+    text: fun (c) {
+      return ml_text([
+        "A jury of five hundred convicts you of 'corrupting the youth of the market' on evidence nobody can find. A fine of ", ml_cash(c.fine), " and prison. In the next cell sits a barefoot old man with a snub nose: Socrates.",
+        "\n\nAt midnight your friends bribe the guards. 'Come,' they whisper. Socrates doesn't move. 'I have lived under these laws all my life. Shall I break them now because they wrong me? One must never do wrong in return for wrong.'"
+      ])
+    },
+    options: [
+      {
+        label: "DNT: Serve your sentence",
+        school: "dnt",
+        run: fun (c) {
+          ml_lose(c.fine)
+          ml_jail(200)
+          ml_later(200, "socrates", "served", 0, 0, 0, 0)
+          ml_note("Court", "You stay. Two hundred days. Socrates nods once, and drinks his hemlock at dawn.")
+        }
+      },
+      {
+        label: "UTL: Escape, do good outside",
+        school: "utl",
+        run: fun (c) {
+          ml_lose(c.fine)
+          if (ml_roll(50)) {
+            ml_rep(0, -6)
+            ml_rep(2, -4)
+            ml_note(ML_TITLE, "You're over the wall before dawn. Free, and wanted. Every newspaper calls you a fugitive, but you'll do more good free than rotting in a cell. Socrates would disagree.")
+          } else {
+            ml_jail(400)
+            ml_rep(0, -4)
+            ml_note("Court", "The guards took the bribe and turned you in anyway. Escape attempt: your sentence more than doubles. Socrates was right about the laws, at least about these guards.")
+          }
+        }
+      }
+    ],
+    outcomes: {
+      served: fun (a0, a1, a2, a3) {
+        ml_rep(2, 8)
+        ml_rep(0, 5)
+        ml_note("News", "Released after two hundred days, you walk out to a crowd. Your conviction has been overturned and your refusal to flee is famous. Socrates died for this principle. You only lost a year of your life to it.")
+      }
+    }
+  },
+
+  -- VE: reward ------------------------------------------------------------------------------
+  {
+    id: "aristotle",
+    school: "ve",
+    title: "The Peripatetic",
+    can: fun () {
+      return true
+    },
+    setup: fun () {
+      return { human: 0, gift: ml_amt(0.1) }
+    },
+    text: fun (c) {
+      return ml_text([
+        "In the park, a bearded man in a chiton falls into step beside you and doesn't stop walking. Aristotle taught this way, pacing the Lyceum. He's heard about your choices.",
+        "\n\n'One swallow does not make a spring, nor one fine day. Nor does one good deed make a person happy. But you have made a habit of it, and a habit is a character. That, and nothing else, is eudaimonia.'"
+      ])
+    },
+    options: [
+      {
+        label: "Walk with him",
+        school: "",
+        run: fun (c) {
+          global.happy = 100
+          global.stress = 0
+          ml_all_reps(2)
+          ml_gain(c.gift)
+          ml_note(ML_TITLE, "You walk until sunset. For the first time in years you're not anxious about anything. Everything you are seems to fit together, and the money, " + ml_cash(c.gift) + " of it, is the least of it.")
+        }
+      }
+    ],
+    outcomes: {}
+  },
+
+  -- VE: choice ---------------------------------------------------------------------------------
+  {
+    id: "confucius",
+    school: "ve",
+    title: "The Upright Son",
+    can: fun () {
+      return ml_random_contact() > 0
+    },
+    setup: fun () {
+      let h = ml_random_contact()
+      return { human: h, who: ml_name(h) }
+    },
+    text: fun (c) {
+      return ml_text([
+        c.who, " confesses: years ago they stole from a rival firm to pay for their mother's surgery. Now investigators want to know what you know. An old scholar is sitting quietly in your waiting room. He introduces himself as Kong Qiu. Confucius.",
+        "\n\n'The Duke of She told me that in his land, the upright son testifies when his father steals a sheep. In my land, the father covers for the son and the son for the father. Uprightness lies in that.'"
+      ])
+    },
+    options: [
+      {
+        label: "VE: Shield your friend",
+        school: "ve",
+        run: fun (c) {
+          ml_friend(c.human, 30)
+          ml_later(irandom_range(10, 20), "confucius", "shielded", c.human, 0, 0, 0)
+        }
+      },
+      {
+        label: "DNT: Tell the truth",
+        school: "dnt",
+        run: fun (c) {
+          ml_friend(c.human, -40)
+          ml_rep(2, 3)
+          ml_later(irandom_range(10, 20), "confucius", "truth", c.human, 0, 0, 0)
+        }
+      }
+    ],
+    outcomes: {
+      shielded: fun (h, a1, a2, a3) {
+        if (ml_roll(60)) {
+          ml_rep(3, 4)
+          ml_happy(15)
+          ml_note(ML_TITLE, "The investigation dies quietly. " + ml_name(h) + " repays the rival firm anonymously and owes you everything. Confucius would call this ren: humaneness, starting with the people closest to you.")
+        } else {
+          ml_rep(0, -4)
+          ml_rep(2, -3)
+          ml_jail(90)
+          ml_note("Court", "Investigators find the old transfer records and charge you with obstruction. Three months. " + ml_name(h) + " visits every week. Loyalty, at a price.")
+        }
+      },
+      truth: fun (h, a1, a2, a3) {
+        if (ml_roll(50)) {
+          ml_rep(0, 2)
+          ml_gain(ml_amt(0.03))
+          ml_note("Court", ml_name(h) + " is convicted and the rival firm pays you a reward for your cooperation. You kept faith with the truth. You lost a friend to do it.")
+        } else {
+          ml_rep(3, -4)
+          ml_stress(15)
+          ml_note(ML_TITLE, "The case collapses on a technicality. " + ml_name(h) + " walks free and tells everyone you turned them in. You told the truth, and now everyone thinks you're an informer.")
+        }
+      }
+    }
+  },
+
+  -- VE: dire -------------------------------------------------------------------------------------
+  {
+    id: "marcus",
+    school: "ve",
+    title: "Meditations in a Plague Year",
+    can: fun () {
+      return true
+    },
+    setup: fun () {
+      return { human: 0, loss: ml_amt(0.1) }
+    },
+    text: fun (c) {
+      return ml_text([
+        "A fever sweeps the city. Trading floors empty, the hospitals overflow, and you wake up burning. At your bedside, a tired man in a general's cloak is writing in a notebook. Marcus Aurelius, emperor through the Antonine Plague.",
+        "\n\n'The impediment to action advances action. What stands in the way becomes the way. You cannot choose whether this happens. You can choose who you are while it does.'"
+      ])
+    },
+    options: [
+      {
+        label: "Endure",
+        school: "",
+        run: fun (c) {
+          ml_hospital()
+          ml_market(0.55)
+          ml_lose(c.loss)
+          ml_later(irandom_range(15, 25), "marcus", "recovered", 0, 0, 0, 0)
+          ml_note("News", "PLAGUE. Markets collapse as the city shuts down. You're in hospital, " + ml_cash(c.loss) + " poorer, and the index has lost almost half its value.")
+        }
+      }
+    ],
+    outcomes: {
+      recovered: fun (a0, a1, a2, a3) {
+        ml_rep(4, 4)
+        global.stress = 0
+        ml_note(ML_TITLE, "You recover. The fear that used to follow every trade is gone; you've seen worse than a red day. Marcus left his notebook on your bedside table. The obstacle was the way.")
       }
     }
   }
@@ -1125,15 +1629,34 @@ ML_DILEMMAS = [
 
 -- Engine ---------------------------------------------------------------------
 
-ml_find = fun (id) {
+ml_find_in = fun (list, id) {
   let i = 0
-  while (i < array_length(ML_DILEMMAS)) {
-    if (ML_DILEMMAS[i].id == id) {
-      return ML_DILEMMAS[i]
+  while (i < array_length(list)) {
+    if (list[i].id == id) {
+      return list[i]
     }
     i += 1
   }
   return undefined
+}
+
+ml_find = fun (id) {
+  let d = ml_find_in(ML_DILEMMAS, id)
+  if (is_undefined(d)) {
+    d = ml_find_in(ML_ENCOUNTERS, id)
+  }
+  return d
+}
+
+ml_contains = fun (list, id) {
+  let i = 0
+  while (i < array_length(list)) {
+    if (list[i] == id) {
+      return true
+    }
+    i += 1
+  }
+  return false
 }
 
 ml_blocked = fun () {
@@ -1149,17 +1672,6 @@ ml_blocked = fun () {
   return !is_undefined(mod.cur)
 }
 
-ml_recent = fun (id) {
-  let i = 0
-  while (i < array_length(mod.recent)) {
-    if (mod.recent[i] == id) {
-      return true
-    }
-    i += 1
-  }
-  return false
-}
-
 -- Pick a dilemma whose requirements are met, avoiding the last few seen.
 ml_pick_dilemma = fun () {
   let fresh = []
@@ -1169,7 +1681,7 @@ ml_pick_dilemma = fun () {
     let d = ML_DILEMMAS[i]
     if (d.can()) {
       array_push(any, d)
-      if (!ml_recent(d.id)) {
+      if (!ml_contains(mod.recent, d.id)) {
         array_push(fresh, d)
       }
     }
@@ -1184,12 +1696,42 @@ ml_pick_dilemma = fun () {
   return undefined
 }
 
+-- Encounters the player has unlocked and not yet had.
+ml_pick_encounter = fun () {
+  let ok = []
+  let i = 0
+  while (i < array_length(ML_ENCOUNTERS)) {
+    let e = ML_ENCOUNTERS[i]
+    if (mod.ledger[e.school] >= ML_UNLOCK and !ml_contains(mod.met, e.id) and e.can()) {
+      array_push(ok, e)
+    }
+    i += 1
+  }
+  if (array_length(ok) == 0) {
+    return undefined
+  }
+  return ok[irandom(array_length(ok) - 1)]
+}
+
+-- An unlocked encounter some of the time, otherwise a dilemma.
+ml_pick_any = fun () {
+  let e = ml_pick_encounter()
+  if (!is_undefined(e) and ml_roll(ML_ENCOUNTER_CHANCE)) {
+    return e
+  }
+  return ml_pick_dilemma()
+}
+
 ml_start = fun (d) {
   let ctx = d.setup()
   mod.cur = { id: d.id, ctx: ctx }
-  array_push(mod.recent, d.id)
-  if (array_length(mod.recent) > 6) {
-    array_delete(mod.recent, 0, 1)
+  if (variable_struct_exists(d, "school")) {
+    array_push(mod.met, d.id)
+  } else {
+    array_push(mod.recent, d.id)
+    if (array_length(mod.recent) > 6) {
+      array_delete(mod.recent, 0, 1)
+    }
   }
   mod.last_day = ml_ctl().gameday
   let buttons = []
@@ -1212,10 +1754,15 @@ ml_pick = fun (k) {
     return
   }
   let opt = d.options[k]
-  mod.ledger[opt.school] = mod.ledger[opt.school] + 1
-  mod.choices += 1
+  let s = opt.school
+  if (s != "") {
+    mod.ledger[s] = mod.ledger[s] + 1
+    mod.choices += 1
+  }
   opt.run(ctx)
-  if (mod.choices > 0 and (mod.choices - floor(mod.choices / ML_PROFILE_EVERY) * ML_PROFILE_EVERY) == 0) {
+  if (s != "" and mod.ledger[s] == ML_UNLOCK) {
+    ml_note("The Ledger Stirs", ML_SCHOOL_UNLOCK[s] + "\n\nYou may now meet the great figures of " + ML_SCHOOL_NAME[s] + ".")
+  } else if (s != "" and (mod.choices - floor(mod.choices / ML_PROFILE_EVERY) * ML_PROFILE_EVERY) == 0) {
     ml_profile()
   }
 }
@@ -1229,6 +1776,18 @@ ml_outcome = fun (id, key, a0, a1, a2, a3) {
   f(a0, a1, a2, a3)
 }
 
+ml_met_count = fun (school) {
+  let n = 0
+  let i = 0
+  while (i < array_length(ML_ENCOUNTERS)) {
+    if (ML_ENCOUNTERS[i].school == school and ml_contains(mod.met, ML_ENCOUNTERS[i].id)) {
+      n += 1
+    }
+    i += 1
+  }
+  return n
+}
+
 ml_profile = fun () {
   let best = ML_SCHOOLS[0]
   let lines = ""
@@ -1238,27 +1797,36 @@ ml_profile = fun () {
     if (mod.ledger[s] > mod.ledger[best]) {
       best = s
     }
-    lines += ML_SCHOOL_NAME[s] + ": " + string(mod.ledger[s]) + "\n"
+    let status = string(ml_met_count(s)) + "/3 figures met"
+    if (mod.ledger[s] < ML_UNLOCK) {
+      status = string(ML_UNLOCK - mod.ledger[s]) + " more to meet its figures"
+    }
+    lines += ML_SCHOOL_NAME[s] + ": " + string(mod.ledger[s]) + " (" + status + ")\n"
     i += 1
   }
   ml_note("Know Thyself", lines + "\nYou lean toward " + ML_SCHOOL_NAME[best] + ". " + ML_SCHOOL_VOICE[best])
 }
 
 ml_ledger_reset = fun () {
-  mod.ledger = { util: 0, kant: 0, virtue: 0, power: 0, care: 0 }
+  mod.ledger = { ve: 0, utl: 0, dnt: 0 }
 }
+
+-- Old saves used five schools. Fold them into the three normative ones;
+-- will-to-power and care choices don't map cleanly, so they're dropped.
+ML_LEGACY = { virtue: "ve", util: "utl", kant: "dnt" }
 
 -- Mod ------------------------------------------------------------------------
 
 mod = {
   name: "Morally Lucky",
-  description: "Random moral dilemmas drawn from real philosophy, with big upsides, catastrophic downsides, and luck deciding which. Mature themes. F7 forces a dilemma; Shift+F7 shows your moral ledger.",
+  description: "Normative-ethics dilemmas (virtue ethics, consequentialism, deontology) with luck deciding the fallout, plus encounters with the great figures of each school. Mature themes. F7 forces a dilemma; Ctrl+F7 an encounter; Shift+F7 shows your ledger.",
 
   cur: undefined,
   recent: [],
+  met: [],
   last_day: -1000,
   choices: 0,
-  ledger: { util: 0, kant: 0, virtue: 0, power: 0, care: 0 },
+  ledger: { ve: 0, utl: 0, dnt: 0 },
 
   start_game: fun () {
     -- Registered every session: dialog buttons and saved delayed
@@ -1279,7 +1847,7 @@ mod = {
       return
     }
     if (ml_roll(ML_CHANCE)) {
-      let d = ml_pick_dilemma()
+      let d = ml_pick_any()
       if (!is_undefined(d)) {
         ml_start(d)
       }
@@ -1299,43 +1867,65 @@ mod = {
       ml_note(ML_TITLE, "A dilemma is already waiting for your answer.")
       return
     }
-    let d = ml_pick_dilemma()
+    let d = undefined
+    if (keyboard_check(vk_control)) {
+      d = ml_pick_encounter()
+      if (is_undefined(d)) {
+        ml_note(ML_TITLE, "No great figure wants to meet you yet. Reach " + string(ML_UNLOCK) + " choices in a school, then come back. Shift+F7 shows your ledger.")
+        return
+      }
+    } else {
+      d = ml_pick_any()
+    }
     if (!is_undefined(d)) {
       ml_start(d)
     }
   },
 
   save_data: fun () {
-    return { recent: mod.recent, last_day: mod.last_day, choices: mod.choices, ledger: mod.ledger }
+    return { recent: mod.recent, met: mod.met, last_day: mod.last_day, choices: mod.choices, ledger: mod.ledger }
   },
 
   load_data: fun (state) {
     mod.cur = undefined
     mod.recent = []
+    mod.met = []
     mod.last_day = -1000
     mod.choices = 0
     ml_ledger_reset()
-    if (is_struct(state)) {
-      if (variable_struct_exists(state, "recent") and is_array(state.recent)) {
-        mod.recent = state.recent
-      }
-      if (variable_struct_exists(state, "last_day")) {
-        mod.last_day = state.last_day
-      }
-      if (variable_struct_exists(state, "choices")) {
-        mod.choices = state.choices
-      }
-      if (variable_struct_exists(state, "ledger") and is_struct(state.ledger)) {
-        let i = 0
-        while (i < array_length(ML_SCHOOLS)) {
-          let s = ML_SCHOOLS[i]
-          if (variable_struct_exists(state.ledger, s)) {
-            mod.ledger[s] = state.ledger[s]
-          }
-          i += 1
+    if (!is_struct(state)) {
+      return
+    }
+    if (variable_struct_exists(state, "recent") and is_array(state.recent)) {
+      mod.recent = state.recent
+    }
+    if (variable_struct_exists(state, "met") and is_array(state.met)) {
+      mod.met = state.met
+    }
+    if (variable_struct_exists(state, "last_day")) {
+      mod.last_day = state.last_day
+    }
+    if (variable_struct_exists(state, "ledger") and is_struct(state.ledger)) {
+      let l = state.ledger
+      let i = 0
+      while (i < array_length(ML_SCHOOLS)) {
+        let s = ML_SCHOOLS[i]
+        if (variable_struct_exists(l, s)) {
+          mod.ledger[s] = l[s]
         }
+        i += 1
+      }
+      let old = variable_struct_get_names(ML_LEGACY)
+      let j = 0
+      while (j < array_length(old)) {
+        if (variable_struct_exists(l, old[j])) {
+          let to = ML_LEGACY[old[j]]
+          mod.ledger[to] = mod.ledger[to] + l[old[j]]
+        }
+        j += 1
       }
     }
+    mod.choices = mod.ledger.ve + mod.ledger.utl + mod.ledger.dnt
   }
 }
 return mod
