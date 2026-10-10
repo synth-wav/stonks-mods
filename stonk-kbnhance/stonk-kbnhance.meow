@@ -1,0 +1,569 @@
+-- Enhanced Keyboard Controls (stonk-kbnhance)
+-- Keyboard navigation for the Exchange window (o_birza).
+--
+--   Tab               next tab (Stocks, Shorts, Portfolio, Commodities)
+--   Up / Down         move the highlighted row (crosses pages)
+--   Left / Right      previous / next page (built into the game)
+--   + / -             buy / sell the highlighted row (hold to repeat, = and numpad work too)
+--   W                 cycle the quantity multiplier (the game only does this on
+--                     Commodities; the mod adds it to Stocks and Shorts)
+--   Enter             confirm the deal
+--   I                 open the highlighted company's details
+--   B                 bulk buy prompt for the highlighted stock
+--   Esc               close the exchange (built into the game)
+--
+-- Outside the exchange:
+--   . / ,             speed time up / slow it down (pause, normal, fast, turbo)
+--   Space             pause / resume (built into the game)
+--
+-- The game only reads clicks from the real mouse, so + / - / Enter / I / B / W
+-- replicate the exact code paths of the matching buttons in
+-- o_birza's Draw event (limits, timers, multiplier, hold acceleration).
+--
+-- Top-level helpers are assigned without `let` so the mod's callbacks can
+-- see them (see modding_guide.txt).
+
+KBX_TAB_ORDER = [0, 1, 2, 4]
+KBX_KEY_PLUS = [187, 107]    -- "=/+" key, numpad +
+KBX_KEY_MINUS = [189, 109]   -- "-" key, numpad -
+
+kbx_birza = fun () {
+  if (!instance_exists(o_birza)) {
+    return undefined
+  }
+  return instance_find(o_birza, 0)
+}
+
+-- Same gate o_birza uses before it accepts clicks (bclick / window checks).
+kbx_blocked = fun () {
+  if (global.windowopen != 0) {
+    return true
+  }
+  if (window_blocks_world()) {
+    return true
+  }
+  if (instance_exists(o_human) or instance_exists(o_company) or instance_exists(o_shop) or instance_exists(o_calendar) or instance_exists(o_contacts) or instance_exists(o_kalkulator)) {
+    return true
+  }
+  return false
+}
+
+-- Bind a game script/builtin to an instance so it runs as that instance.
+-- Catspeak's `method` unwraps to catspeak_method, so pass the raw index.
+kbx_bind = fun (inst, f) {
+  return method(inst, method_get_index(f))
+}
+
+kbx_any_down = fun (keys) {
+  let k = 0
+  while (k < array_length(keys)) {
+    if (keyboard_check(keys[k])) {
+      return true
+    }
+    k += 1
+  }
+  return false
+}
+
+-- Slot indices shown as rows on the current tab/page, in display order.
+kbx_rows = fun (b) {
+  let rows = []
+  let t = b.vkladka
+  if (t == 4) {
+    let c = 0
+    while (c < 6) {
+      array_push(rows, c)
+      c += 1
+    }
+    return rows
+  }
+  if (t == 3) {
+    return rows
+  }
+  let range = birza_page_range(b.page, b.max_on_pages)
+  let i = range.start
+  while (i < range.stop) {
+    if (global.company_stockprice[i] > 0) {
+      array_push(rows, i)
+    }
+    i += 1
+  }
+  return rows
+}
+
+kbx_can_trade = fun (b) {
+  return b.holyday == 0 and b.height_draw >= b.height and global.totalbankrupt == 0
+}
+
+-- Mirrors the per-share timer cost the game charges for buys.
+kbx_share_time = fun (b, i) {
+  return b.speedlimit * (1 / max(100000, global.company_number_a[i])) * 310000
+}
+
+-- Mirrors the tab buttons at the top of o_birza's Draw event.
+kbx_set_tab = fun (b, t) {
+  if (t == 1 and !(b.myrepanow >= b.needrepa or global.short_av == 1)) {
+    b.vkladka = 3
+    return
+  }
+  b.vkladka = t
+  if (t == 0 or t == 1) {
+    let buy = b.comp_ac_buy
+    let seff = b.comp_ac_seff
+    let st = b.comp_ac_start
+    let st2 = b.comp_ac2_start
+    let i = 0
+    while (i < 30) {
+      buy[i] = 0
+      seff[i] = 0
+      st[i] = global.company_ac[i]
+      st2[i] = global.company_short[i]
+      i += 1
+    }
+    b.limit = money_round(global.money + ((global.fortune - global.money) * 0.75)) - global.short_dolg
+    if (global.char[1] > 50 and global.char[4] > 30) {
+      b.limit = max(b.limit, 5000000000000000)
+    }
+  }
+}
+
+-- "+" on a Stocks / Shorts row.
+kbx_stock_plus = fun (b, i, first, fire, n) {
+  let t = b.vkladka
+  let buy = b.comp_ac_buy
+  let st = b.comp_ac_start
+  let st2 = b.comp_ac2_start
+  if (b.timeout > 0 and buy[i] >= 0) {
+    return
+  }
+  if (t == 1 and global.bankrupt_dali == i) {
+    if (first) {
+      create_notification(txt(546), txt(4510))
+    }
+    return
+  }
+  let cena = global.company_stockprice[i] / global.company_number_a[i]
+  let allowed = b.get_stock_allowed_limit(i)
+  let limitno = 0
+  let reason = ""
+  if (t == 0) {
+    if ((st[i] + buy[i]) >= (allowed - 5)) {
+      limitno = 1
+    }
+  } else if (buy[i] >= 0) {
+    if ((buy[i] + st[i] + st2[i]) >= global.company_number_a[i]) {
+      limitno = 1
+      reason = txt(4788)
+    } else if ((buy[i] + st[i]) >= allowed) {
+      limitno = 1
+      reason = txt(4786)
+    } else if ((b.limit - cena) < -b.balance) {
+      limitno = 1
+      if (global.short_dolg > 0) {
+        reason = txt(4787)
+      } else {
+        reason = txt("short_no_credit_open")
+      }
+    }
+  }
+  if (limitno == 1) {
+    if (first) {
+      if (reason == "") {
+        reason = txt(1573)
+      }
+      create_notification(txt(546), reason)
+    }
+    return
+  }
+  if (!fire) {
+    return
+  }
+  let ctl = instance_find(o_control, 0)
+  let figa_b = kbx_bind(b, figa)
+  let k = 0
+  while (k < n) {
+    if (t == 0 and (st[i] + buy[i]) >= allowed) {
+      limitno = 1
+    }
+    figa_b()
+    if (limitno == 0) {
+      if (t == 0) {
+        if ((global.money - cena) >= -b.balance and (buy[i] + st[i]) < allowed) {
+          ctl.timer += kbx_share_time(b, i)
+          buy[i] = buy[i] + 1
+        }
+      }
+      if (t == 1) {
+        if (buy[i] < 0) {
+          buy[i] = buy[i] + 1
+        } else if ((b.limit - cena - global.short_dolg) >= -b.balance and (buy[i] + st[i]) < allowed and (buy[i] + st[i] + st2[i]) < global.company_number_a[i]) {
+          ctl.timer += kbx_share_time(b, i)
+          buy[i] = buy[i] + 1
+        }
+      }
+    }
+    k += 1
+  }
+}
+
+-- "-" on a Stocks / Shorts row.
+kbx_stock_minus = fun (b, i, fire, n) {
+  let t = b.vkladka
+  let buy = b.comp_ac_buy
+  let st = b.comp_ac_start
+  let st2 = b.comp_ac2_start
+  if (b.timeout > 0 and buy[i] <= 0) {
+    return
+  }
+  let figa_b = kbx_bind(b, figa)
+  figa_b()
+  if (!fire) {
+    return
+  }
+  let ctl = instance_find(o_control, 0)
+  let k = 0
+  while (k < n) {
+    if (t == 0) {
+      if ((buy[i] + st[i]) > 0) {
+        if (buy[i] < 0) {
+          ctl.timer += b.speedlimit
+        }
+        buy[i] = buy[i] - 1
+      }
+    }
+    if (t == 1) {
+      if ((st2[i] + buy[i]) > 0) {
+        figa_b()
+        let unit = round(global.company_stockprice[i] / max(1, global.company_number_a[i]))
+        let projected = (global.money + (b.money_trata * global.short_procent)) - b.money_pribil - unit
+        if (projected >= -1000000) {
+          ctl.timer += b.speedlimit
+          buy[i] = buy[i] - 1
+        }
+      }
+    }
+    k += 1
+  }
+}
+
+-- "+" / "-" on a Commodities row.
+kbx_comm_step = fun (b, i, dir, fire, n) {
+  let buy = b.comm_ac_buy
+  let st = b.comm_ac_start
+  if (dir > 0 and b.timeout > 0 and buy[i] >= 0) {
+    return
+  }
+  if (dir < 0 and b.timeout > 0 and buy[i] <= 0) {
+    return
+  }
+  let figa2_b = kbx_bind(b, figa2)
+  if (dir < 0) {
+    figa2_b()
+  }
+  if (!fire) {
+    return
+  }
+  let ctl = instance_find(o_control, 0)
+  let cena = global.commodity_price[i]
+  let k = 0
+  while (k < n) {
+    if (dir > 0) {
+      figa2_b()
+      if ((global.money - cena) >= -b.balance) {
+        ctl.timer += kbx_share_time(b, i)
+        buy[i] = buy[i] + 1
+      }
+    } else if ((buy[i] + st[i]) > 0) {
+      ctl.timer += kbx_share_time(b, i)
+      buy[i] = buy[i] - 1
+    }
+    k += 1
+  }
+}
+
+-- Mirrors the confirm button (event_user 0 on o_birza).
+kbx_confirm = fun (b) {
+  if (b.holyday != 0) {
+    return
+  }
+  let t = b.vkladka
+  let ok = false
+  if ((t == 0 or t == 4) and b.balance != 0) {
+    ok = true
+  }
+  if (t == 1) {
+    if (b.balance != 0) {
+      ok = true
+    }
+    let buy = b.comp_ac_buy
+    let i = 0
+    while (i < 30) {
+      if (buy[i] != 0) {
+        ok = true
+      }
+      i += 1
+    }
+  }
+  if (!ok) {
+    return
+  }
+  -- A Catspeak `with` makes builtins run as `b`. Binding event_user with
+  -- method() did not apply the deal in-game, so don't use kbx_bind here.
+  with (b) {
+    event_user(0)
+  }
+  -- A successful confirm zeroes every pending order.
+  let pending = b.comp_ac_buy
+  let n = 30
+  if (t == 4) {
+    pending = b.comm_ac_buy
+    n = 6
+  }
+  let i = 0
+  while (i < n) {
+    if (pending[i] != 0) {
+      create_notification("Enhanced Keyboard Controls", "Enter could not confirm the deal. Click the deal button to confirm instead.")
+      return
+    }
+    i += 1
+  }
+}
+
+-- Mirrors the multiplier button: 1 > 2 > 5 > 10 > 25 > 50 > 100 > 500 > 1.
+KBX_MULTS = [1, 2, 5, 10, 25, 50, 100, 500]
+kbx_next_mult = fun () {
+  let k = 0
+  while (k < array_length(KBX_MULTS)) {
+    if (KBX_MULTS[k] == global.mnozhitel) {
+      if (k == array_length(KBX_MULTS) - 1) {
+        return KBX_MULTS[0]
+      }
+      return KBX_MULTS[k + 1]
+    }
+    k += 1
+  }
+  return 2
+}
+
+-- Time speed: 1 pause, 2 normal, 3 fast (the top-bar buttons), 4 turbo.
+-- Speed 4 already exists in o_control's timer code but has no button.
+KBX_MAX_SPEED = 4
+kbx_time_keys = fun () {
+  let faster = keyboard_check_pressed(190)   -- "."
+  let slower = keyboard_check_pressed(188)   -- ","
+  if (!faster and !slower) {
+    return
+  }
+  if (!instance_exists(o_control) or instance_exists(o_birza) or instance_exists(o_vn) or instance_exists(o_kalkulator)) {
+    return
+  }
+  if (global.windowopen != 0 or window_blocks_world() or global.totalbankrupt != 0) {
+    return
+  }
+  let ctl = instance_find(o_control, 0)
+  let s = ctl.time_speed
+  if (faster and s < KBX_MAX_SPEED) {
+    s += 1
+  }
+  if (slower and s > 1) {
+    s -= 1
+  }
+  ctl.time_speed = s
+  if (s > 1) {
+    ctl.time_speed_now = s
+  }
+}
+
+mod = {
+  name: "Enhanced Keyboard Controls",
+  description: "Keyboard controls for the Exchange: Tab switches tabs, Up/Down select a row, "
+    + "+/- buy/sell (hold to repeat), W multiplier, Enter confirms, I opens company details, B bulk-buys. "
+    + "Outside it: . and , speed time up and down.",
+
+  sel: 0,
+  hold: 0,
+  last_inst: undefined,
+  last_tab: -1,
+
+  input_capture: fun () {
+    kbx_time_keys()
+    let b = kbx_birza()
+    if (is_undefined(b)) {
+      mod.last_inst = undefined
+      mod.hold = 0
+      return
+    }
+    if (mod.last_inst != b) {
+      mod.last_inst = b
+      mod.sel = 0
+      mod.hold = 0
+      mod.last_tab = b.vkladka
+    }
+    if (mod.last_tab != b.vkladka) {
+      mod.last_tab = b.vkladka
+      mod.sel = 0
+    }
+    if (kbx_blocked()) {
+      mod.hold = 0
+      return
+    }
+
+    -- Tab switching (forward only: Shift+Tab is Steam's overlay shortcut)
+    if (keyboard_check_pressed(vk_tab)) {
+      let pos = 1
+      if (b.vkladka != 3) {
+        pos = 0
+        while (KBX_TAB_ORDER[pos] != b.vkladka) {
+          pos += 1
+        }
+      }
+      pos += 1
+      if (pos >= array_length(KBX_TAB_ORDER)) {
+        pos = 0
+      }
+      kbx_set_tab(b, KBX_TAB_ORDER[pos])
+      mod.last_tab = b.vkladka
+      mod.sel = 0
+      keyboard_clear(vk_tab)
+      return
+    }
+
+    -- Multiplier on Stocks / Shorts. On Commodities the game already reads W
+    -- itself, so leave it alone there to avoid cycling twice.
+    if (keyboard_check_pressed(ord("W")) and (b.vkladka == 0 or b.vkladka == 1) and b.holyday == 0) {
+      global.mnozhitel = kbx_next_mult()
+      keyboard_clear(ord("W"))
+      return
+    }
+
+    let rows = kbx_rows(b)
+    let count = array_length(rows)
+    if (count == 0) {
+      mod.hold = 0
+      return
+    }
+    mod.sel = clamp(mod.sel, 0, count - 1)
+
+    -- Row selection, rolling over to the neighbouring page
+    if (keyboard_check_pressed(vk_up)) {
+      if (mod.sel > 0) {
+        mod.sel -= 1
+      } else if (b.vkladka != 4 and b.page > 1) {
+        b.page -= 1
+        mod.sel = 99
+      }
+      keyboard_clear(vk_up)
+      return
+    }
+    if (keyboard_check_pressed(vk_down)) {
+      if (mod.sel < count - 1) {
+        mod.sel += 1
+      } else if (b.vkladka != 4 and b.page < b.pages) {
+        b.page += 1
+        mod.sel = 0
+      }
+      keyboard_clear(vk_down)
+      return
+    }
+
+    let i = rows[mod.sel]
+    let t = b.vkladka
+
+    if (keyboard_check_pressed(vk_enter)) {
+      kbx_confirm(b)
+      keyboard_clear(vk_enter)
+      return
+    }
+
+    if (keyboard_check_pressed(ord("I")) and t <= 2) {
+      let c = instance_create(3, 3, o_company)
+      if (instance_exists(c)) {
+        c.human = i
+        c.selected_company = i
+        b.vsdvsd = c
+      }
+      keyboard_clear(ord("I"))
+      return
+    }
+
+    if (keyboard_check_pressed(ord("B")) and t == 0) {
+      if (kbx_can_trade(b) and global.money > (global.nikkei * 1000)) {
+        b.stock_buy_number_prompt(i)
+      }
+      keyboard_clear(ord("B"))
+      return
+    }
+
+    -- Buy / sell with the game's hold acceleration
+    let plus = kbx_any_down(KBX_KEY_PLUS)
+    let minus = kbx_any_down(KBX_KEY_MINUS)
+    if ((!plus and !minus) or (plus and minus) or t == 2 or t == 3 or !kbx_can_trade(b)) {
+      mod.hold = 0
+      return
+    }
+    mod.hold += 1
+    let h = mod.hold
+    let first = h == 1
+    let fire = first or (h > 16 and (h - floor(h / 3) * 3) == 0)
+    let n = floor(global.mnozhitel * max(h * 0.03, 1))
+    if (t == 4) {
+      if (plus) {
+        kbx_comm_step(b, i, 1, fire, n)
+      } else {
+        kbx_comm_step(b, i, -1, fire, n)
+      }
+    } else if (plus) {
+      kbx_stock_plus(b, i, first, fire, n)
+    } else {
+      kbx_stock_minus(b, i, fire, n)
+    }
+  },
+
+  draw_end: fun () {
+    -- Turbo (speed 4) has no top-bar button: light the "fast" arrows and add a third.
+    let ctl = instance_find(o_control, 0)
+    if (room_get() == RoomMain and global.hide_chars != 1 and ctl.time_speed == 4) {
+      let oy = global.y_new_offset
+      let old_c = draw_get_colour()
+      draw_set_colour(global.color1)
+      draw_triangle(104, 3 - oy, 104, 9 - oy, 110, 6 - oy, false)
+      draw_triangle(109, 3 - oy, 109, 9 - oy, 115, 6 - oy, false)
+      draw_triangle(114, 3 - oy, 114, 9 - oy, 120, 6 - oy, false)
+      draw_set_colour(old_c)
+    }
+
+    let b = kbx_birza()
+    if (is_undefined(b) or kbx_blocked()) {
+      return
+    }
+    if (b.height_draw < b.height or b.width_draw < b.width) {
+      return
+    }
+    let count = array_length(kbx_rows(b))
+    if (count == 0) {
+      return
+    }
+    -- Row band drawn with a MULTIPLY blend (result = band colour x screen).
+    -- The light background takes on the band colour, but dark text stays
+    -- dark, so text contrast survives the game's CRT ghosting. A normal
+    -- translucent fill (v1/v2) lightened the text and washed it out.
+    -- A thin solid accent bar sits at the far left, clear of any text.
+    let r = clamp(mod.sel, 0, count - 1)
+    let x1 = b.x - b.width_draw + 6
+    let x2 = b.x + b.width_draw - 6
+    let y1 = 48 + (r * b.otstup_bir) + 1
+    let y2 = y1 + b.otstup_bir - 1
+    let old_col = draw_get_colour()
+    let old_alpha = draw_get_alpha()
+    draw_set_alpha(1)
+    draw_set_colour(global.color3)
+    gpu_set_blendmode_ext(bm_dest_colour, bm_zero)
+    draw_rectangle(x1, y1, x2, y2, false)
+    gpu_set_blendmode(bm_normal)
+    draw_set_colour(global.color4)
+    draw_rectangle(x1, y1, x1 + 1, y2, false)
+    draw_set_colour(old_col)
+    draw_set_alpha(old_alpha)
+  }
+}
+return mod

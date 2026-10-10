@@ -1,0 +1,12 @@
+# Local Claude Code settings (machine-specific paths and permissions)
+.claude/settings.local.json
+
+# Never commit decompiled game code or game assets
+dump/
+CodeEntries/
+*.win
+
+# OS clutter
+Thumbs.db
+desktop.ini
+.DS_Store
