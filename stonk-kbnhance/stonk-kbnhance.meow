@@ -12,6 +12,12 @@
 --   B                 bulk buy prompt for the highlighted stock
 --   Esc               close the exchange (built into the game)
 --
+-- In Charts (companies or commodities):
+--   Up / Down         highlight the next / previous line (the legend row turns
+--                     white, as on mouse hover)
+--   S                 solo the highlighted line: hide the rest and show it on a
+--                     chart zoomed to its own range. S again restores the rest.
+--
 -- Outside the exchange:
 --   . / ,             speed time up / slow it down (pause, normal, fast, turbo)
 --   Space             pause / resume (built into the game)
@@ -374,19 +380,409 @@ kbx_time_keys = fun () {
   }
 }
 
+-- ---------------------------------------------------------------------------
+-- Charts view (global.vybrano == 2, drawn in o_control's Draw event)
+--
+-- o_control.chart_type: 0 companies, 1 commodities, 2 heatmap (not handled).
+-- global.activechart is the highlighted series. The game sets it from mouse
+-- hover in the legend, AFTER chart_draw has already used it, and the chart
+-- only re-renders its cached surface when chart_update() marks it dirty. So
+-- the mod sets it in the `draw` hook (top of Draw, before chart_draw) and
+-- marks the chart dirty only when the selection changes.
+-- global.compchart_active[i] is each series' visible flag; o_control keeps a
+-- copy per chart type in chart_comp / chart_field (synced in End Step).
+
+KBX_CHART_HIDDEN_Y = 100000
+
+-- o_control while the company or commodity chart is the current view.
+kbx_chart_view = fun () {
+  if (room_get() != RoomMain or global.vybrano != 2 or !instance_exists(o_control)) {
+    return undefined
+  }
+  let ctl = instance_find(o_control, 0)
+  if (ctl.chart_type != 0 and ctl.chart_type != 1) {
+    return undefined
+  }
+  return ctl
+}
+
+-- Same, but undefined while the chart isn't actually on screen (an event,
+-- the Exchange or a window on top).
+kbx_chart_ctl = fun () {
+  let ctl = kbx_chart_view()
+  if (is_undefined(ctl)) {
+    return undefined
+  }
+  if (global.event != 0 or instance_exists(o_birza) or instance_exists(o_company)) {
+    return undefined
+  }
+  if (global.windowopen != 0 or window_blocks_world()) {
+    return undefined
+  }
+  return ctl
+}
+
+kbx_chart_map = fun (ctl, t) {
+  if (t == 1) {
+    return ctl.chartCommodity
+  }
+  return ctl.chartCompany
+}
+
+-- Series indices in legend order.
+kbx_chart_rows = fun (t) {
+  let rows = []
+  if (t == 1) {
+    let c = 0
+    while (c < 6) {
+      array_push(rows, c)
+      c += 1
+    }
+    return rows
+  }
+  let i = 0
+  while (i < global.numberofcompany) {
+    if (global.company_price[i] > 0) {
+      array_push(rows, i)
+    }
+    i += 1
+  }
+  return rows
+}
+
+kbx_index_of = fun (arr, v) {
+  let k = 0
+  while (k < array_length(arr)) {
+    if (arr[k] == v) {
+      return k
+    }
+    k += 1
+  }
+  return -1
+}
+
+-- Hide every series except `sel`. The game's own chart is moved off-screen
+-- (its "y" in the chart map) and kbx_solo_draw draws a zoomed one instead:
+-- the game's axis always starts at 0, which flattens a single stock's line.
+kbx_solo_apply = fun (ctl, t, sel) {
+  let act = global.compchart_active
+  if (!mod.solo) {
+    mod.solo = true
+    mod.solo_type = t
+    mod.solo_saved = []
+    let k = 0
+    while (k < 30) {
+      array_push(mod.solo_saved, act[k])
+      k += 1
+    }
+    let m = kbx_chart_map(ctl, t)
+    mod.solo_y = ds_map_find_value(m, "y")
+    ds_map_replace(m, "y", KBX_CHART_HIDDEN_Y)
+  }
+  let i = 0
+  while (i < 30) {
+    act[i] = 0
+    i += 1
+  }
+  act[sel] = 1
+  chart_update(kbx_chart_map(ctl, t))
+}
+
+-- Restore the visible flags saved by kbx_solo_apply, and the chart position.
+kbx_solo_off = fun () {
+  if (!mod.solo) {
+    return
+  }
+  mod.solo = false
+  if (!instance_exists(o_control)) {
+    return
+  }
+  let ctl = instance_find(o_control, 0)
+  let t = mod.solo_type
+  let m = kbx_chart_map(ctl, t)
+  ds_map_replace(m, "y", mod.solo_y)
+  let store = ctl.chart_comp
+  if (t == 1) {
+    store = ctl.chart_field
+  }
+  let same_view = global.vybrano == 2 and ctl.chart_type == t
+  let act = global.compchart_active
+  let i = 0
+  while (i < 30) {
+    store[i] = mod.solo_saved[i]
+    if (same_view) {
+      act[i] = mod.solo_saved[i]
+    }
+    i += 1
+  }
+  chart_update(m)
+}
+
+kbx_chart_reset = fun () {
+  kbx_solo_off()
+  if (mod.chart_kb and instance_exists(o_control)) {
+    let ctl = instance_find(o_control, 0)
+    chart_update(ctl.chartCompany)
+    chart_update(ctl.chartCommodity)
+  }
+  mod.chart_kb = false
+  mod.chart_drawn = -1
+}
+
+-- Up / Down move the highlight, S solos it. Runs in input_capture.
+kbx_chart_keys = fun () {
+  let up = keyboard_check_pressed(vk_up)
+  let down = keyboard_check_pressed(vk_down)
+  let solo_key = keyboard_check_pressed(ord("S"))
+  if (!up and !down and !solo_key) {
+    return
+  }
+  let ctl = kbx_chart_ctl()
+  if (is_undefined(ctl) or kbx_blocked() or keyboard_check(vk_alt)) {
+    return
+  }
+  let t = ctl.chart_type
+  let rows = kbx_chart_rows(t)
+  let n = array_length(rows)
+  if (n == 0) {
+    return
+  }
+  let pos = -1
+  if (mod.chart_kb) {
+    pos = kbx_index_of(rows, mod.chart_sel)
+  } else if (global.activechart >= 0) {
+    -- Start from the row under the mouse, if any.
+    pos = kbx_index_of(rows, global.activechart)
+  }
+  if (up or down) {
+    if (pos < 0) {
+      pos = 0
+      if (up) {
+        pos = n - 1
+      }
+    } else if (down) {
+      pos += 1
+      if (pos >= n) {
+        pos = 0
+      }
+    } else {
+      pos -= 1
+      if (pos < 0) {
+        pos = n - 1
+      }
+    }
+    keyboard_clear(vk_up)
+    keyboard_clear(vk_down)
+  } else if (pos < 0) {
+    pos = 0
+  }
+  mod.chart_kb = true
+  mod.chart_type_seen = t
+  mod.chart_sel = rows[pos]
+
+  if (solo_key) {
+    keyboard_clear(ord("S"))
+    if (mod.solo) {
+      kbx_solo_off()
+      return
+    }
+    kbx_solo_apply(ctl, t, mod.chart_sel)
+    return
+  }
+  if (mod.solo) {
+    kbx_solo_apply(ctl, t, mod.chart_sel)
+  }
+}
+
+-- Rounds a raw tick step up to 1, 2 or 5 x 10^k.
+kbx_nice_step = fun (raw) {
+  if (raw <= 0) {
+    return 1
+  }
+  let mag = power(10, floor(log10(raw)))
+  let f = raw / mag
+  if (f <= 1) {
+    return mag
+  }
+  if (f <= 2) {
+    return 2 * mag
+  }
+  if (f <= 5) {
+    return 5 * mag
+  }
+  return 10 * mag
+}
+
+-- The zoomed chart for a soloed series, in the space the game's chart uses
+-- (same position and size maths as chart_draw).
+kbx_solo_draw = fun (ctl) {
+  let t = mod.solo_type
+  let m = kbx_chart_map(ctl, t)
+  let series = ds_list_find_value(ds_map_find_value(m, "series"), mod.chart_sel)
+  if (is_undefined(series)) {
+    return
+  }
+  if (!ds_exists(series, ds_type_map)) {
+    return
+  }
+  let data = ds_map_find_value(series, "data")
+  let n = ds_list_size(data)
+  if (n < 2) {
+    return
+  }
+  let lo = ds_list_find_value(data, 0)
+  let hi = lo
+  let j = 1
+  while (j < n) {
+    let v = ds_list_find_value(data, j)
+    lo = min(lo, v)
+    hi = max(hi, v)
+    j += 1
+  }
+
+  -- Axis: 4-6 round-number gridlines hugging the data.
+  let step = kbx_nice_step(max(hi - lo, max(1, abs(hi) * 0.01)) / 5)
+  let a_lo = floor(lo / step) * step
+  let a_hi = ceil(hi / step) * step
+  if (a_hi <= a_lo) {
+    a_hi = a_lo + step
+  }
+
+  let old_col = draw_get_colour()
+  let old_alpha = draw_get_alpha()
+  let old_font = draw_get_font()
+  let old_ha = draw_get_halign()
+  let old_va = draw_get_valign()
+  draw_set_font(global.font)
+
+  let longnam = 0
+  let c = 0
+  while (c < 30) {
+    if (global.company_price[c] > 0 and global.company_liq[c] == 0) {
+      longnam = max(longnam, string_width(string(global.company_name[c]) + " " + string_thousands(price_stock(c))))
+    }
+    c += 1
+  }
+  let he = string_height("X")
+  let x1 = 17 + longnam - global.x_new_offset
+  let y1 = 13 - global.y_new_offset
+  let w = 372 + (global.x_new_offset * 2) - 8
+  let h = 235 + (global.y_new_offset * 2)
+  let pad_l = string_width(string_thousands(a_hi + 5)) + 5
+  let px1 = x1 + pad_l
+  let px2 = x1 + w - string_width("XXX")
+  let py1 = y1 + (he / 2) + 4
+  let py2 = y1 + h - (he / 2)
+  let fg = ds_map_find_value(m, "foreground_colour")
+
+  draw_set_halign(fa_left)
+  draw_set_valign(fa_top)
+  let g = a_hi
+  while (g >= a_lo - (step / 2)) {
+    let gy = py2 - ((g - a_lo) / (a_hi - a_lo)) * (py2 - py1)
+    draw_set_alpha(0.6)
+    draw_line_colour(px1, gy, px2, gy, fg, fg)
+    draw_set_alpha(1)
+    draw_text_colour(x1 + 4, gy - (he / 2), string_thousands(g), fg, fg, fg, fg, 1)
+    g -= step
+  }
+
+  let col = ds_map_find_value(series, "colour")
+  let dx = (px2 - px1) / (n - 1)
+  j = 0
+  while (j < n - 1) {
+    let v0 = ds_list_find_value(data, j)
+    let v1 = ds_list_find_value(data, j + 1)
+    let y0 = py2 - ((v0 - a_lo) / (a_hi - a_lo)) * (py2 - py1)
+    let y_1 = py2 - ((v1 - a_lo) / (a_hi - a_lo)) * (py2 - py1)
+    draw_line_width_colour(px1 + (j * dx), y0, px1 + ((j + 1) * dx), y_1, 2, col, col)
+    j += 1
+  }
+
+  -- Change over the whole chart, top right.
+  let first = ds_list_find_value(data, 0)
+  let last = ds_list_find_value(data, n - 1)
+  let label = "Solo"
+  if (first != 0) {
+    let pct = round(((last - first) / abs(first)) * 1000) / 10
+    let sign = ""
+    if (pct > 0) {
+      sign = "+"
+    }
+    label = "Solo  " + sign + string(pct) + "%"
+  }
+  draw_set_halign(fa_right)
+  draw_text_colour(px2, y1 + 2, label, col, col, col, col, 1)
+
+  draw_set_colour(old_col)
+  draw_set_alpha(old_alpha)
+  draw_set_font(old_font)
+  draw_set_halign(old_ha)
+  draw_set_valign(old_va)
+}
+
+-- Redraws the selected legend row in white, the way the game marks the row
+-- under the mouse (o_control Draw, legend loop: same positions and text).
+kbx_chart_mark = fun (ctl) {
+  let t = ctl.chart_type
+  let rows = kbx_chart_rows(t)
+  let pos = kbx_index_of(rows, mod.chart_sel)
+  if (pos < 0) {
+    return
+  }
+  let i = mod.chart_sel
+  let comps = 8
+  if (t == 0) {
+    comps = array_length(rows)
+  }
+  let yyhh = 233 + (global.y_new_offset * 2)
+  let ystartt = 13 - global.y_new_offset
+  let xx_poss = 5 - global.x_new_offset
+  let ty = ystartt + ((yyhh / comps) * pos) + global.yoffset
+  let old_col = draw_get_colour()
+  let old_font = draw_get_font()
+  let old_ha = draw_get_halign()
+  let old_va = draw_get_valign()
+  draw_set_font(global.font)
+  draw_set_halign(fa_left)
+  draw_set_valign(fa_top)
+  draw_set_colour(c_white)
+  if (t == 0) {
+    draw_text_scribble(7 + xx_poss, ty, global.company_name[i] + " " + string_thousands(round(global.company_stockprice[i] / global.company_number_a[i])))
+  } else {
+    draw_text(7 + xx_poss, ty, global.commodity_name[i] + " " + string_thousands(global.commodity_price[i]))
+  }
+  draw_set_colour(old_col)
+  draw_set_font(old_font)
+  draw_set_halign(old_ha)
+  draw_set_valign(old_va)
+}
+
 mod = {
   name: "Enhanced Keyboard Controls",
   description: "Keyboard controls for the Exchange: Tab switches tabs, Up/Down select a row, "
     + "+/- buy/sell (hold to repeat), W multiplier, Enter confirms, I opens company details, B bulk-buys. "
-    + "Outside it: . and , speed time up and down.",
+    + "Outside it: . and , speed time up and down. "
+    + "Charts: Up/Down highlight a company, S solos it on a zoomed chart.",
 
   sel: 0,
   hold: 0,
   last_inst: undefined,
   last_tab: -1,
+  chart_kb: false,
+  chart_sel: -1,
+  chart_drawn: -1,
+  chart_mx: 0,
+  chart_my: 0,
+  chart_type_seen: -1,
+  solo: false,
+  solo_type: 0,
+  solo_saved: [],
+  solo_y: 13,
 
   input_capture: fun () {
     kbx_time_keys()
+    kbx_chart_keys()
     let b = kbx_birza()
     if (is_undefined(b)) {
       mod.last_inst = undefined
@@ -519,7 +915,48 @@ mod = {
     }
   },
 
+  -- Top of o_control's Draw, before chart_draw reads global.activechart.
+  draw: fun () {
+    if (!mod.chart_kb and !mod.solo) {
+      return
+    }
+    let view = kbx_chart_view()
+    if (is_undefined(view)) {
+      kbx_chart_reset()
+      return
+    }
+    if (view.chart_type != mod.chart_type_seen) {
+      kbx_chart_reset()
+      return
+    }
+    global.activechart = mod.chart_sel
+    if (mod.chart_drawn != mod.chart_sel) {
+      mod.chart_drawn = mod.chart_sel
+      chart_update(kbx_chart_map(view, view.chart_type))
+    }
+  },
+
   draw_end: fun () {
+    if (mod.chart_kb) {
+      let cc = kbx_chart_ctl()
+      if (!is_undefined(cc)) {
+        -- Hovering a legend row with a moving mouse moves the keyboard
+        -- selection too. A mouse left resting on the legend doesn't.
+        let mx = mousex()
+        let my = mousey()
+        let moved = mx != mod.chart_mx or my != mod.chart_my
+        mod.chart_mx = mx
+        mod.chart_my = my
+        if (moved and !mod.solo and global.activechart >= 0 and global.activechart != mod.chart_sel) {
+          mod.chart_sel = global.activechart
+        }
+        if (mod.solo) {
+          kbx_solo_draw(cc)
+        }
+        kbx_chart_mark(cc)
+      }
+    }
+
     -- Turbo (speed 4) has no top-bar button: light the "fast" arrows and add a third.
     let ctl = instance_find(o_control, 0)
     if (room_get() == RoomMain and global.hide_chars != 1 and ctl.time_speed == 4) {
