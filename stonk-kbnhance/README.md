@@ -1,5 +1,7 @@
 # Enhanced Keyboard Controls (`stonk-kbnhance`)
 
+[Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3817122216)
+
 **Trade without touching the mouse.** Enhanced Keyboard Controls lets you work the whole Exchange from the keyboard: switch tabs, pick rows, buy, sell and confirm. It also adds hotkeys for game speed.
 
 ## Features
