@@ -7,6 +7,7 @@ Mods for [STONKS-9800](https://store.steampowered.com/search/?term=STONKS-9800),
 | Mod | Dev name | What it does |
 | --- | --- | --- |
 | [Enhanced Keyboard Controls](stonk-kbnhance/) | `stonk-kbnhance` | Run the whole Exchange from the keyboard |
+| [Morally Lucky](stonk-morallylucky/) | `stonk-morallylucky` | Random moral dilemmas from real philosophy, where luck decides the fallout. Mature themes |
 
 ## Installing a mod
 
