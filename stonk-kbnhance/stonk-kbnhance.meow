@@ -548,15 +548,19 @@ mod = {
     -- dark, so text contrast survives the game's CRT ghosting. A normal
     -- translucent fill (v1/v2) lightened the text and washed it out.
     -- A thin solid accent bar sits at the far left, clear of any text.
+    -- The band starts at x 16 so it covers the whole sector icon (drawn
+    -- centred on x 25, 16px wide) without crossing the window's left border.
+    -- Its colour is the palette's accent blended halfway toward white: a light
+    -- tint keeps text readable on darker palettes.
     let r = clamp(mod.sel, 0, count - 1)
-    let x1 = b.x - b.width_draw + 6
+    let x1 = max(b.x - b.width_draw + 1, 16)
     let x2 = b.x + b.width_draw - 6
     let y1 = 48 + (r * b.otstup_bir) + 1
     let y2 = y1 + b.otstup_bir - 1
     let old_col = draw_get_colour()
     let old_alpha = draw_get_alpha()
     draw_set_alpha(1)
-    draw_set_colour(global.color3)
+    draw_set_colour(merge_colour(16777215, global.color3, 0.5))
     gpu_set_blendmode_ext(bm_dest_colour, bm_zero)
     draw_rectangle(x1, y1, x2, y2, false)
     gpu_set_blendmode(bm_normal)
