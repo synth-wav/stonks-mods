@@ -8,6 +8,7 @@ Mods for [STONKS-9800](https://store.steampowered.com/search/?term=STONKS-9800),
 | --- | --- | --- |
 | [Enhanced Keyboard Controls](stonk-kbnhance/) | `stonk-kbnhance` | Run the whole Exchange from the keyboard |
 | [Morally Lucky](stonk-morallylucky/) | `stonk-morallylucky` | Normative-ethics dilemmas (VE, UTL, DNT) where luck decides the fallout, and great philosophers who seek you out. Mature themes |
+| [Any Raise](stonk-anyraise/) | `stonk-anyraise` | Raise any amount in the secret poker games, not just the two preset sizes |
 
 ## Installing a mod
 
