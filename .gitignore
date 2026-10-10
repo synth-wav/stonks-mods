@@ -10,3 +10,6 @@ CodeEntries/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Local Workshop publish state (tools/publish-workshop.ps1)
+.workshop-state.json
